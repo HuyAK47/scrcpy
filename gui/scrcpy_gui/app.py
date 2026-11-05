@@ -3,6 +3,7 @@
 import sys
 import threading
 import tkinter as tk
+from pathlib import Path
 from tkinter import messagebox, ttk
 from typing import Dict, List, Optional
 
@@ -17,6 +18,26 @@ from .settings import (
     load_settings,
     save_settings,
 )
+
+
+ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+APP_ICON_PATH = ASSETS_DIR / "app-icon.png"
+# Lớp cửa sổ (WM_CLASS) khớp StartupWMClass trong scrcpy-gui.desktop
+WM_CLASS_NAME = "scrcpy-gui"
+
+
+def set_window_icon(root: tk.Tk, icon_path: Path = APP_ICON_PATH) -> bool:
+    """Đặt icon cho cửa sổ ứng dụng. Trả về False nếu không nạp được ảnh."""
+    if not icon_path.is_file():
+        return False
+    try:
+        image = tk.PhotoImage(file=str(icon_path))
+        root.iconphoto(True, image)
+    except tk.TclError:
+        return False
+    # Giữ tham chiếu để ảnh không bị thu hồi bộ nhớ
+    root._app_icon = image  # type: ignore[attr-defined]
+    return True
 
 
 class ScrcpyApp:
@@ -660,7 +681,8 @@ class ScrcpyApp:
 
 def main() -> None:
     """Điểm khởi chạy ứng dụng."""
-    root = tk.Tk()
+    root = tk.Tk(className=WM_CLASS_NAME)
+    set_window_icon(root)
     app = ScrcpyApp(root)
     root.mainloop()
 

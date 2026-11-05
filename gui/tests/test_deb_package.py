@@ -197,6 +197,19 @@ class TestDebPackage(unittest.TestCase):
                     f"Quyền của {path} không đúng: thực tế {entries[path]['perms']}, mong đợi {expected_perm}",
                 )
 
+            # 1b. Icon app và icon cửa sổ màn hình lấy từ gui/scrcpy_gui/assets
+            extract_dir = tmp_path / "extract"
+            subprocess.run(["dpkg-deb", "-x", str(expected_deb), str(extract_dir)], check=True)
+            assets = _repo_root / "gui" / "scrcpy_gui" / "assets"
+            self.assertEqual(
+                (extract_dir / "usr/share/icons/hicolor/256x256/apps/scrcpy-gui.png").read_bytes(),
+                (assets / "app-icon.png").read_bytes(),
+            )
+            self.assertEqual(
+                (extract_dir / "opt/scrcpy-gui/scrcpy.png").read_bytes(),
+                (assets / "screen-icon.png").read_bytes(),
+            )
+
             # 2. Kiểm tra control fields bằng dpkg-deb -f
             f_res = subprocess.run(
                 ["dpkg-deb", "-f", str(expected_deb)],
@@ -235,6 +248,7 @@ class TestDebPackage(unittest.TestCase):
             self.assertIn("Name[vi]=Hiển thị màn hình Android", desktop_content)
             self.assertIn("Categories=Utility;", desktop_content)
             self.assertIn("Icon=scrcpy-gui", desktop_content)
+            self.assertIn("StartupWMClass=scrcpy-gui", desktop_content)
             self.assertIn("Exec=scrcpy-gui", desktop_content)
 
             if self.has_desktop_validate:

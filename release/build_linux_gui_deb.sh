@@ -107,6 +107,11 @@ mkdir -p "$OPT_DIR"
 cp -a "$DIST_DIR"/. "$OPT_DIR/"
 cp "$SERVER_PATH" "$OPT_DIR/scrcpy-server"
 cp -a "$ROOT_DIR/gui/scrcpy_gui" "$OPT_DIR/"
+# Icon riêng cho cửa sổ hiển thị màn hình (scrcpy portable đọc scrcpy.png cạnh binary)
+SCREEN_ICON="$ROOT_DIR/gui/scrcpy_gui/assets/screen-icon.png"
+if [[ -f "$SCREEN_ICON" ]]; then
+    cp "$SCREEN_ICON" "$OPT_DIR/scrcpy.png"
+fi
 find "$OPT_DIR/scrcpy_gui" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 find "$OPT_DIR/scrcpy_gui" -type f -name "*.pyc" -delete 2>/dev/null || true
 
@@ -139,6 +144,7 @@ Comment=Display and control Android devices
 Comment[vi]=Hiển thị và điều khiển thiết bị Android
 Exec=scrcpy-gui
 Icon=scrcpy-gui
+StartupWMClass=scrcpy-gui
 Terminal=false
 Categories=Utility;
 EOF
@@ -146,7 +152,10 @@ EOF
 # 4. Icon
 ICON_DEST="$STAGE_DIR/usr/share/icons/hicolor/256x256/apps/scrcpy-gui.png"
 mkdir -p "$(dirname "$ICON_DEST")"
-if [[ -f "$ROOT_DIR/app/data/scrcpy.png" ]]; then
+APP_ICON="$ROOT_DIR/gui/scrcpy_gui/assets/app-icon.png"
+if [[ -f "$APP_ICON" ]]; then
+    cp "$APP_ICON" "$ICON_DEST"
+elif [[ -f "$ROOT_DIR/app/data/scrcpy.png" ]]; then
     cp "$ROOT_DIR/app/data/scrcpy.png" "$ICON_DEST"
 elif [[ -f "$DIST_DIR/scrcpy.png" ]]; then
     cp "$DIST_DIR/scrcpy.png" "$ICON_DEST"
