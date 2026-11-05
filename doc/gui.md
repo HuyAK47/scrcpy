@@ -93,7 +93,7 @@ Nếu tệp cấu hình bị hỏng, ứng dụng tự động khôi phục về
 
 ### 1. Cài đặt các gói phụ thuộc hệ thống (APT)
 
-Dựa theo cấu hình job `build-linux-x86_64` trong `.github/workflows/release.yml`:
+Cài đặt các gói phụ thuộc cho client tĩnh theo cấu hình job `build-linux-x86_64` trong `.github/workflows/release.yml`:
 
 ```bash
 sudo apt update
@@ -105,9 +105,16 @@ sudo apt install -y meson ninja-build nasm ffmpeg libavcodec-dev \
     libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
     libxkbcommon-dev libdrm-dev libva-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev \
     libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev libthai-dev \
-    libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev \
-    openjdk-17-jdk dpkg-deb python3 python3-tk
+    libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
 ```
+
+Ngoài danh sách trên trong workflow, cần cài đặt thêm các công cụ bổ sung để build scrcpy-server và chạy/đóng gói GUI:
+
+```bash
+sudo apt install -y openjdk-17-jdk python3 python3-tk
+```
+
+> **Lưu ý**: Công cụ đóng gói `dpkg-deb` thuộc gói `dpkg` (đã có sẵn trên các bản phân phối Ubuntu/Debian).
 
 ### 2. Thiết lập biến môi trường Android SDK
 
