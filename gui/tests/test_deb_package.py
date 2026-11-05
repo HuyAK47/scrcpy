@@ -188,6 +188,8 @@ class TestDebPackage(unittest.TestCase):
                 "/usr/bin/scrcpy-gui": "-rwxr-xr-x",
                 "/usr/share/applications/scrcpy-gui.desktop": "-rw-r--r--",
                 "/usr/share/icons/hicolor/256x256/apps/scrcpy-gui.png": "-rw-r--r--",
+                "/usr/share/icons/hicolor/256x256/apps/scrcpy-screen.png": "-rw-r--r--",
+                "/usr/share/applications/scrcpy-screen.desktop": "-rw-r--r--",
             }
             for path, expected_perm in expected_files.items():
                 self.assertIn(path, entries, f"Thiếu file {path} trong gói deb")
@@ -209,6 +211,15 @@ class TestDebPackage(unittest.TestCase):
                 (extract_dir / "opt/scrcpy-gui/scrcpy.png").read_bytes(),
                 (assets / "screen-icon.png").read_bytes(),
             )
+
+            self.assertEqual(
+                (extract_dir / "usr/share/icons/hicolor/256x256/apps/scrcpy-screen.png").read_bytes(),
+                (assets / "screen-icon.png").read_bytes(),
+            )
+            screen_desktop = (extract_dir / "usr/share/applications/scrcpy-screen.desktop").read_text()
+            self.assertIn("StartupWMClass=scrcpy\n", screen_desktop)
+            self.assertIn("Icon=scrcpy-screen\n", screen_desktop)
+            self.assertIn("NoDisplay=true\n", screen_desktop)
 
             # 2. Kiểm tra control fields bằng dpkg-deb -f
             f_res = subprocess.run(

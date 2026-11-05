@@ -164,6 +164,29 @@ else
     exit 1
 fi
 
+# 4b. Cửa sổ hiển thị màn hình (scrcpy, WM_CLASS "scrcpy") cần .desktop riêng
+# để dock/taskbar GNOME hiện đúng icon thay vì biểu tượng mặc định.
+SCREEN_ICON_DEST="$STAGE_DIR/usr/share/icons/hicolor/256x256/apps/scrcpy-screen.png"
+if [[ -f "$ROOT_DIR/gui/scrcpy_gui/assets/screen-icon.png" ]]; then
+    cp "$ROOT_DIR/gui/scrcpy_gui/assets/screen-icon.png" "$SCREEN_ICON_DEST"
+else
+    cp "$ICON_DEST" "$SCREEN_ICON_DEST"
+fi
+cat <<'EOF' > "$STAGE_DIR/usr/share/applications/scrcpy-screen.desktop"
+[Desktop Entry]
+Type=Application
+Name=Scrcpy Screen
+Name[vi]=Màn hình Android
+Comment=Android device screen mirrored by scrcpy
+Comment[vi]=Màn hình thiết bị Android do scrcpy hiển thị
+Exec=scrcpy
+Icon=scrcpy-screen
+StartupWMClass=scrcpy
+NoDisplay=true
+Terminal=false
+Categories=Utility;
+EOF
+
 # 5. DEBIAN/control
 mkdir -p "$STAGE_DIR/DEBIAN"
 cat <<EOF > "$STAGE_DIR/DEBIAN/control"
