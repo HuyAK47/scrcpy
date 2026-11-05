@@ -1,4 +1,6 @@
-"""Giao diện người dùng Tkinter cho scrcpy-gui."""
+"""Giao diện người dùng Tkinter hiện đại cho scrcpy-gui."""
+
+from __future__ import annotations
 
 import sys
 import threading
@@ -17,6 +19,25 @@ from .settings import (
     Settings,
     load_settings,
     save_settings,
+)
+from .theme import (
+    BANNER_WARN_BG,
+    BANNER_WARN_BORDER,
+    BANNER_WARN_FG,
+    BG_CARD,
+    BG_DARK,
+    BORDER,
+    STATUS_OFFLINE,
+    STATUS_ONLINE,
+    STATUS_RUNNING,
+    STATUS_UNAUTHORIZED,
+    TEXT_MUTED,
+    TEXT_PRIMARY,
+    TEXT_SECONDARY,
+    Card,
+    apply_theme,
+    get_font,
+    get_mono_font,
 )
 
 
@@ -46,8 +67,11 @@ class ScrcpyApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("scrcpy GUI - Điều khiển thiết bị Android")
-        self.root.geometry("820x680")
-        self.root.minsize(720, 560)
+        self.root.geometry("860x700")
+        self.root.minsize(760, 580)
+
+        # Áp dụng chủ đề tối công nghệ và quản lý chấm trạng thái
+        self.dot_registry = apply_theme(self.root)
 
         # Trạng thái binary
         self.adb_bin = find_adb()
@@ -69,26 +93,26 @@ class ScrcpyApp:
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
 
     def _init_ui(self) -> None:
-        """Khởi tạo bố cục giao diện."""
-        main_frame = ttk.Frame(self.root, padding=10)
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        """Khởi tạo bố cục giao diện dạng thẻ."""
+        main_container = tk.Frame(self.root, bg=BG_DARK, padx=16, pady=12)
+        main_container.pack(fill=tk.BOTH, expand=True)
 
         # 1. Cảnh báo nếu thiếu binary
-        self._init_banner(main_frame)
+        self._init_banner(main_container)
 
         # 2. Khung kết nối Wi-Fi
-        self._init_wifi_frame(main_frame)
+        self._init_wifi_frame(main_container)
 
         # 3. Khung danh sách thiết bị
-        self._init_device_list_frame(main_frame)
+        self._init_device_list_frame(main_container)
 
         # 4. Khung tuỳ chọn cấu hình
-        self._init_settings_frame(main_frame)
+        self._init_settings_frame(main_container)
 
         # 5. Thanh trạng thái dưới đáy
         self._init_status_bar()
 
-    def _init_banner(self, parent: ttk.Frame) -> None:
+    def _init_banner(self, parent: tk.Widget) -> None:
         """Hiển thị cảnh báo nếu không tìm thấy adb hoặc scrcpy."""
         missing = []
         if not self.adb_bin:
@@ -98,84 +122,125 @@ class ScrcpyApp:
 
         if missing:
             msg = (
-                f"Cảnh báo: Không tìm thấy lệnh thực thi '{', '.join(missing)}'.\n"
+                f"⚠️  Cảnh báo: Không tìm thấy lệnh thực thi '{', '.join(missing)}'.\n"
                 "Vui lòng đảm bảo các công cụ đã được cài đặt trong PATH hoặc qua biến môi trường ADB / SCRCPY_BIN."
             )
             banner = tk.Label(
                 parent,
                 text=msg,
-                bg="#fff3cd",
-                fg="#856404",
-                padx=10,
-                pady=6,
+                bg=BANNER_WARN_BG,
+                fg=BANNER_WARN_FG,
+                padx=14,
+                pady=8,
                 justify=tk.LEFT,
-                relief=tk.SOLID,
-                borderwidth=1,
+                font=get_font(9),
+                highlightbackground=BANNER_WARN_BORDER,
+                highlightcolor=BANNER_WARN_BORDER,
+                highlightthickness=1,
             )
             banner.pack(fill=tk.X, pady=(0, 10))
 
-    def _init_wifi_frame(self, parent: ttk.Frame) -> None:
-        """Khu vực kết nối mạng Wi-Fi."""
-        frame = ttk.LabelFrame(parent, text="Kết nối Wi-Fi", padding=10)
-        frame.pack(fill=tk.X, pady=(0, 10))
+    def _init_wifi_frame(self, parent: tk.Widget) -> None:
+        """Khu vực kết nối mạng Wi-Fi dạng thẻ."""
+        card = Card(parent, padding=(14, 10))
+        card.pack(fill=tk.X, pady=(0, 10))
 
-        ttk.Label(frame, text="Địa chỉ IP[:cổng]:").pack(side=tk.LEFT, padx=(0, 6))
+        card.add_header(
+            title="📶  Kết nối Wi-Fi",
+            subtitle="kết nối thiết bị qua mạng nội bộ (mặc định cổng 5555)",
+        )
+
+        row = tk.Frame(card, bg=BG_CARD)
+        row.pack(fill=tk.X)
+
+        tk.Label(
+            row,
+            text="Địa chỉ IP[:cổng]:",
+            bg=BG_CARD,
+            fg=TEXT_PRIMARY,
+            font=get_font(9),
+        ).pack(side=tk.LEFT, padx=(0, 8))
 
         self.wifi_ip_var = tk.StringVar(value="")
-        self.wifi_entry = ttk.Entry(frame, textvariable=self.wifi_ip_var, width=22)
+        self.wifi_entry = ttk.Entry(
+            row,
+            textvariable=self.wifi_ip_var,
+            width=24,
+            font=get_mono_font(9),
+        )
         self.wifi_entry.pack(side=tk.LEFT, padx=(0, 10))
         self.wifi_entry.bind("<Return>", lambda e: self._on_connect_wifi_click())
 
         self.btn_connect = ttk.Button(
-            frame,
+            row,
             text="Kết nối",
             command=self._on_connect_wifi_click,
+            style="Secondary.TButton",
         )
         self.btn_connect.pack(side=tk.LEFT, padx=(0, 6))
 
         self.btn_switch_wifi = ttk.Button(
-            frame,
+            row,
             text="Chuyển sang Wi-Fi",
             command=self._on_switch_wifi_click,
+            style="Secondary.TButton",
             state=tk.DISABLED,
         )
         self.btn_switch_wifi.pack(side=tk.LEFT, padx=(0, 6))
 
         self.btn_disconnect = ttk.Button(
-            frame,
+            row,
             text="Ngắt kết nối",
             command=self._on_disconnect_wifi_click,
+            style="Secondary.TButton",
             state=tk.DISABLED,
         )
         self.btn_disconnect.pack(side=tk.LEFT, padx=(0, 6))
 
-    def _init_device_list_frame(self, parent: ttk.Frame) -> None:
-        """Danh sách thiết bị kết nối."""
-        frame = ttk.LabelFrame(parent, text="Danh sách thiết bị", padding=10)
-        frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+    def _init_device_list_frame(self, parent: tk.Widget) -> None:
+        """Danh sách thiết bị kết nối dạng thẻ."""
+        card = Card(parent, padding=(14, 12))
+        card.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+
+        _, _, self.lbl_device_count = card.add_header(
+            title="📱  Danh sách thiết bị",
+            subtitle="chọn thiết bị để điều khiển hoặc nhấp đúp để mở màn hình",
+            badge_text="0 thiết bị",
+        )
 
         # Treeview + Scrollbar
-        tree_container = ttk.Frame(frame)
+        tree_container = tk.Frame(card, bg=BG_CARD)
         tree_container.pack(fill=tk.BOTH, expand=True)
 
         columns = ("model", "serial", "transport", "status")
         self.tree = ttk.Treeview(
             tree_container,
             columns=columns,
-            show="headings",
+            show="tree headings",
             selectmode="browse",
             height=6,
         )
+
+        # Cột #0 dành cho chấm trạng thái màu
+        self.tree.heading("#0", text="")
+        self.tree.column("#0", width=36, minwidth=36, stretch=False, anchor=tk.CENTER)
 
         self.tree.heading("model", text="Tên máy")
         self.tree.heading("serial", text="Serial")
         self.tree.heading("transport", text="Kết nối")
         self.tree.heading("status", text="Trạng thái")
 
-        self.tree.column("model", width=200, minwidth=140, stretch=True)
+        self.tree.column("model", width=220, minwidth=140, stretch=True)
         self.tree.column("serial", width=190, minwidth=140, stretch=False)
         self.tree.column("transport", width=90, minwidth=80, stretch=False, anchor=tk.CENTER)
-        self.tree.column("status", width=220, minwidth=160, stretch=False)
+        self.tree.column("status", width=200, minwidth=160, stretch=False)
+
+        # Cấu hình màu chữ theo tag trạng thái
+        self.tree.tag_configure("device", foreground=TEXT_PRIMARY)
+        self.tree.tag_configure("running", foreground=STATUS_RUNNING)
+        self.tree.tag_configure("unauthorized", foreground=STATUS_UNAUTHORIZED)
+        self.tree.tag_configure("offline", foreground=STATUS_OFFLINE)
+        self.tree.tag_configure("unknown", foreground=TEXT_MUTED)
 
         scrollbar = ttk.Scrollbar(tree_container, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
@@ -186,91 +251,120 @@ class ScrcpyApp:
         self.tree.bind("<<TreeviewSelect>>", self._on_device_selected)
         self.tree.bind("<Double-1>", self._on_device_double_click)
 
-        # Nút điều khiển
-        btn_bar = ttk.Frame(frame)
-        btn_bar.pack(fill=tk.X, pady=(8, 0))
+        # Dòng nhắc khi chưa có thiết bị nào
+        self.lbl_empty_hint = tk.Label(
+            card,
+            text="Chưa kết nối thiết bị nào. Cắm cáp USB (đã bật Gỡ lỗi USB) hoặc nhập IP để kết nối Wi-Fi.",
+            bg=BG_CARD,
+            fg=TEXT_MUTED,
+            font=get_font(9),
+        )
+        self.lbl_empty_hint.pack(fill=tk.X, pady=(6, 0))
+
+        # Thanh nút điều khiển
+        btn_bar = tk.Frame(card, bg=BG_CARD)
+        btn_bar.pack(fill=tk.X, pady=(10, 0))
 
         self.btn_start = ttk.Button(
             btn_bar,
-            text="Hiển thị",
+            text="▶  Hiển thị",
             command=self._on_start_click,
+            style="Accent.TButton",
             state=tk.DISABLED,
         )
-        self.btn_start.pack(side=tk.LEFT, padx=(0, 6))
+        self.btn_start.pack(side=tk.LEFT, padx=(0, 8))
 
         self.btn_stop = ttk.Button(
             btn_bar,
-            text="Dừng",
+            text="■  Dừng",
             command=self._on_stop_click,
+            style="Danger.TButton",
             state=tk.DISABLED,
         )
-        self.btn_stop.pack(side=tk.LEFT, padx=(0, 6))
+        self.btn_stop.pack(side=tk.LEFT, padx=(0, 8))
 
         self.btn_refresh = ttk.Button(
             btn_bar,
-            text="Làm mới",
+            text="⟳  Làm mới",
             command=self._on_refresh_click,
+            style="Secondary.TButton",
         )
-        self.btn_refresh.pack(side=tk.LEFT, padx=(0, 6))
+        self.btn_refresh.pack(side=tk.LEFT, padx=(0, 8))
 
-        self.lbl_device_count = ttk.Label(btn_bar, text="0 thiết bị")
-        self.lbl_device_count.pack(side=tk.RIGHT)
+    def _init_settings_frame(self, parent: tk.Widget) -> None:
+        """Khung cấu hình tuỳ chọn scrcpy dạng thẻ."""
+        card = Card(parent, padding=(14, 10))
+        card.pack(fill=tk.X, pady=(0, 4))
 
-    def _init_settings_frame(self, parent: ttk.Frame) -> None:
-        """Khung cấu hình tuỳ chọn scrcpy."""
-        frame = ttk.LabelFrame(
-            parent,
-            text="Tuỳ chọn scrcpy (áp dụng cho lần mở tiếp theo)",
-            padding=10,
+        card.add_header(
+            title="⚙️  Tuỳ chọn scrcpy",
+            subtitle="áp dụng cho lần mở tiếp theo",
         )
-        frame.pack(fill=tk.X, pady=(0, 5))
 
         # Dòng 1: Comboboxes
-        row1 = ttk.Frame(frame)
-        row1.pack(fill=tk.X, pady=(0, 6))
+        row1 = tk.Frame(card, bg=BG_CARD)
+        row1.pack(fill=tk.X, pady=(0, 8))
 
         # Max size
-        ttk.Label(row1, text="Độ phân giải tối đa:").pack(side=tk.LEFT, padx=(0, 4))
+        tk.Label(
+            row1,
+            text="Độ phân giải tối đa:",
+            bg=BG_CARD,
+            fg=TEXT_PRIMARY,
+            font=get_font(9),
+        ).pack(side=tk.LEFT, padx=(0, 6))
         self.var_max_size = tk.StringVar(value=self.settings.max_size)
         cb_max_size = ttk.Combobox(
             row1,
             textvariable=self.var_max_size,
             values=MAX_SIZE_OPTIONS,
             state="readonly",
-            width=14,
+            width=15,
         )
         cb_max_size.pack(side=tk.LEFT, padx=(0, 16))
         cb_max_size.bind("<<ComboboxSelected>>", lambda e: self._save_current_settings())
 
         # Bitrate
-        ttk.Label(row1, text="Bitrate:").pack(side=tk.LEFT, padx=(0, 4))
+        tk.Label(
+            row1,
+            text="Bitrate:",
+            bg=BG_CARD,
+            fg=TEXT_PRIMARY,
+            font=get_font(9),
+        ).pack(side=tk.LEFT, padx=(0, 6))
         self.var_bitrate = tk.StringVar(value=self.settings.bitrate)
         cb_bitrate = ttk.Combobox(
             row1,
             textvariable=self.var_bitrate,
             values=BITRATE_OPTIONS,
             state="readonly",
-            width=8,
+            width=12,
         )
         cb_bitrate.pack(side=tk.LEFT, padx=(0, 16))
         cb_bitrate.bind("<<ComboboxSelected>>", lambda e: self._save_current_settings())
 
-        # Max FPS
-        ttk.Label(row1, text="FPS tối đa:").pack(side=tk.LEFT, padx=(0, 4))
+        # FPS tối đa
+        tk.Label(
+            row1,
+            text="FPS tối đa:",
+            bg=BG_CARD,
+            fg=TEXT_PRIMARY,
+            font=get_font(9),
+        ).pack(side=tk.LEFT, padx=(0, 6))
         self.var_max_fps = tk.StringVar(value=self.settings.max_fps)
         cb_max_fps = ttk.Combobox(
             row1,
             textvariable=self.var_max_fps,
             values=MAX_FPS_OPTIONS,
             state="readonly",
-            width=12,
+            width=14,
         )
         cb_max_fps.pack(side=tk.LEFT)
         cb_max_fps.bind("<<ComboboxSelected>>", lambda e: self._save_current_settings())
 
         # Dòng 2: Checkboxes
-        row2 = ttk.Frame(frame)
-        row2.pack(fill=tk.X, pady=(0, 6))
+        row2 = tk.Frame(card, bg=BG_CARD)
+        row2.pack(fill=tk.X, pady=(0, 8))
 
         self.var_no_audio = tk.BooleanVar(value=self.settings.no_audio)
         chk_no_audio = ttk.Checkbutton(
@@ -279,7 +373,7 @@ class ScrcpyApp:
             variable=self.var_no_audio,
             command=self._save_current_settings,
         )
-        chk_no_audio.pack(side=tk.LEFT, padx=(0, 12))
+        chk_no_audio.pack(side=tk.LEFT, padx=(0, 14))
 
         self.var_turn_screen_off = tk.BooleanVar(value=self.settings.turn_screen_off)
         chk_screen_off = ttk.Checkbutton(
@@ -288,7 +382,7 @@ class ScrcpyApp:
             variable=self.var_turn_screen_off,
             command=self._save_current_settings,
         )
-        chk_screen_off.pack(side=tk.LEFT, padx=(0, 12))
+        chk_screen_off.pack(side=tk.LEFT, padx=(0, 14))
 
         self.var_stay_awake = tk.BooleanVar(value=self.settings.stay_awake)
         chk_stay_awake = ttk.Checkbutton(
@@ -297,7 +391,7 @@ class ScrcpyApp:
             variable=self.var_stay_awake,
             command=self._save_current_settings,
         )
-        chk_stay_awake.pack(side=tk.LEFT, padx=(0, 12))
+        chk_stay_awake.pack(side=tk.LEFT, padx=(0, 14))
 
         self.var_always_on_top = tk.BooleanVar(value=self.settings.always_on_top)
         chk_always_on_top = ttk.Checkbutton(
@@ -306,7 +400,7 @@ class ScrcpyApp:
             variable=self.var_always_on_top,
             command=self._save_current_settings,
         )
-        chk_always_on_top.pack(side=tk.LEFT, padx=(0, 12))
+        chk_always_on_top.pack(side=tk.LEFT, padx=(0, 14))
 
         self.var_fullscreen = tk.BooleanVar(value=self.settings.fullscreen)
         chk_fullscreen = ttk.Checkbutton(
@@ -318,30 +412,55 @@ class ScrcpyApp:
         chk_fullscreen.pack(side=tk.LEFT)
 
         # Dòng 3: Tham số thêm
-        row3 = ttk.Frame(frame)
+        row3 = tk.Frame(card, bg=BG_CARD)
         row3.pack(fill=tk.X)
 
-        ttk.Label(row3, text="Tham số thêm:").pack(side=tk.LEFT, padx=(0, 4))
+        tk.Label(
+            row3,
+            text="Tham số thêm:",
+            bg=BG_CARD,
+            fg=TEXT_PRIMARY,
+            font=get_font(9),
+        ).pack(side=tk.LEFT, padx=(0, 8))
         self.var_extra_args = tk.StringVar(value=self.settings.extra_args)
         entry_extra = ttk.Entry(row3, textvariable=self.var_extra_args)
-        entry_extra.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+        entry_extra.pack(side=tk.LEFT, fill=tk.X, expand=True)
         entry_extra.bind("<FocusOut>", lambda e: self._save_current_settings())
 
     def _init_status_bar(self) -> None:
         """Khởi tạo thanh trạng thái dưới cùng."""
-        status_frame = ttk.Frame(self.root, relief=tk.SUNKEN, padding=(6, 3))
+        status_frame = tk.Frame(
+            self.root,
+            bg=BG_DARK,
+            highlightbackground=BORDER,
+            highlightthickness=1,
+            padx=14,
+            pady=6,
+        )
         status_frame.pack(side=tk.BOTTOM, fill=tk.X)
 
-        self.lbl_status = ttk.Label(status_frame, text="Sẵn sàng")
-        self.lbl_status.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.lbl_status = tk.Label(
+            status_frame,
+            text="●  Sẵn sàng",
+            bg=BG_DARK,
+            fg=TEXT_PRIMARY,
+            font=get_font(9),
+        )
+        self.lbl_status.pack(side=tk.LEFT, fill=tk.X, expand=True, anchor=tk.W)
 
         info_text = f"adb: {self.adb_bin or 'Không tìm thấy'} | scrcpy: {self.scrcpy_bin or 'Không tìm thấy'}"
-        lbl_info = ttk.Label(status_frame, text=info_text, foreground="#666666")
+        lbl_info = tk.Label(
+            status_frame,
+            text=info_text,
+            bg=BG_DARK,
+            fg=TEXT_SECONDARY,
+            font=get_mono_font(8),
+        )
         lbl_info.pack(side=tk.RIGHT)
 
     def _set_status(self, text: str) -> None:
         """Cập nhật văn bản thanh trạng thái."""
-        self.lbl_status.config(text=text)
+        self.lbl_status.config(text=f"●  {text}")
 
     def _save_current_settings(self) -> None:
         """Cập nhật đối tượng settings và lưu ra tệp JSON."""
@@ -423,7 +542,8 @@ class ScrcpyApp:
         self.devices_by_serial = {d.serial: d for d in devices}
         self._update_treeview_rows()
         self._update_button_states()
-        self.lbl_device_count.config(text=f"{len(devices)} thiết bị")
+        if self.lbl_device_count:
+            self.lbl_device_count.config(text=f"{len(devices)} thiết bị")
 
     def _update_treeview_rows(self) -> None:
         """Vẽ lại hoặc cập nhật các dòng trong Treeview."""
@@ -439,19 +559,25 @@ class ScrcpyApp:
         for dev in self.devices_by_serial.values():
             if self.launcher.is_running(dev.serial):
                 status_text = "Đang hiển thị"
+                state_key = "running"
             else:
                 status_text = dev.state_display
+                state_key = dev.state
+
+            dot_img = self.dot_registry.get(state_key)
 
             item_id = self.tree.insert(
                 "",
                 tk.END,
                 iid=dev.serial,
+                image=dot_img if dot_img else "",
                 values=(
                     dev.display_model,
                     dev.serial,
                     dev.transport_display,
                     status_text,
                 ),
+                tags=(state_key,),
             )
             if dev.serial == selected_serial:
                 to_select = item_id
@@ -460,6 +586,12 @@ class ScrcpyApp:
         if to_select and self.tree.exists(to_select):
             self.tree.selection_set(to_select)
             self.tree.focus(to_select)
+
+        # Cập nhật hiển thị dòng nhắc khi không có thiết bị
+        if not self.devices_by_serial:
+            self.lbl_empty_hint.pack(fill=tk.X, pady=(6, 0))
+        else:
+            self.lbl_empty_hint.pack_forget()
 
     def _get_selected_serial(self) -> Optional[str]:
         """Lấy serial của dòng đang được chọn trong Treeview."""
