@@ -395,7 +395,10 @@ def apply_theme(root: tk.Tk) -> StatusDotRegistry:
     )
     style.map(
         "Treeview",
-        background=[("selected", "#1e293b")],
+        background=[
+            ("selected focus", ACCENT_BG),
+            ("selected", "#22334d"),
+        ],
         foreground=[("selected", "#ffffff")],
     )
 
