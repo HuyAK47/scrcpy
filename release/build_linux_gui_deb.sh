@@ -1,14 +1,22 @@
 #!/bin/bash
 set -eo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Convert relative path to absolute based on current working directory
+to_abs_path() {
+    local p="$1"
+    if [[ -n "$p" ]]; then
+        readlink -m "$p"
+    fi
+}
 
 # Capture user environment overrides before sourcing build_common
-USER_DIST_DIR="${DIST_DIR:-}"
-USER_SERVER_PATH="${SERVER_PATH:-}"
-USER_OUTPUT_DIR="${OUTPUT_DIR:-}"
+USER_DIST_DIR="$(to_abs_path "${DIST_DIR:-}")"
+USER_SERVER_PATH="$(to_abs_path "${SERVER_PATH:-}")"
+USER_OUTPUT_DIR="$(to_abs_path "${OUTPUT_DIR:-}")"
 USER_VERSION="${VERSION:-}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cd "$SCRIPT_DIR"
 # Sourcing build_common provides WORK_DIR, OUTPUT_DIR, VERSION
@@ -116,6 +124,7 @@ EOF
 cat <<'EOF' > "$STAGE_DIR/usr/bin/scrcpy"
 #!/bin/sh
 export SCRCPY_SERVER_PATH=/opt/scrcpy-gui/scrcpy-server
+export ADB=/opt/scrcpy-gui/adb
 exec /opt/scrcpy-gui/scrcpy "$@"
 EOF
 
@@ -142,7 +151,8 @@ if [[ -f "$ROOT_DIR/app/data/scrcpy.png" ]]; then
 elif [[ -f "$DIST_DIR/scrcpy.png" ]]; then
     cp "$DIST_DIR/scrcpy.png" "$ICON_DEST"
 else
-    touch "$ICON_DEST"
+    echo "ERROR: Icon file 'scrcpy.png' not found in '$ROOT_DIR/app/data' or '$DIST_DIR'." >&2
+    exit 1
 fi
 
 # 5. DEBIAN/control
