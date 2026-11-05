@@ -169,6 +169,7 @@ documented in the following pages:
  - [Camera](doc/camera.md)
  - [Video4Linux](doc/v4l2.md)
  - [Shortcuts](doc/shortcuts.md)
+ - [GUI launcher](doc/gui.md)
 
 
 ## Resources
