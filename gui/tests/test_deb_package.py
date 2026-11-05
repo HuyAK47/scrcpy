@@ -260,10 +260,68 @@ class TestDebPackage(unittest.TestCase):
             self.assertTrue(scrcpy_wrapper.is_file())
             scrcpy_content = scrcpy_wrapper.read_text(encoding="utf-8")
             self.assertIn("SCRCPY_SERVER_PATH=/opt/scrcpy-gui/scrcpy-server", scrcpy_content)
+            self.assertIn("ADB=/opt/scrcpy-gui/adb", scrcpy_content)
             self.assertIn("/opt/scrcpy-gui/scrcpy \"$@\"", scrcpy_content)
 
     def test_version_normalization(self):
-        """Kiểm tra chuẩn hoá định dạng Version cho gói .deb."""
+        """Kiểm tra chuẩn hoá định dạng Version cho gói .deb bao gồm cả nhánh hash/chữ (0.0+...)."""
+        if not self.has_dpkg_deb:
+            self.skipTest("dpkg-deb không có sẵn trên hệ thống")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            dist_dir = tmp_path / "dist"
+            dist_dir.mkdir()
+            output_dir = tmp_path / "output"
+            output_dir.mkdir()
+
+            scrcpy_bin = dist_dir / "scrcpy"
+            scrcpy_bin.write_text("#!/bin/sh\nexit 0")
+            scrcpy_bin.chmod(0o755)
+
+            adb_bin = dist_dir / "adb"
+            adb_bin.write_text("#!/bin/sh\nexit 0")
+            adb_bin.chmod(0o755)
+
+            server_file = tmp_path / "scrcpy-server"
+            server_file.write_text("server")
+
+            base_env = os.environ.copy()
+            base_env["DIST_DIR"] = str(dist_dir)
+            base_env["SERVER_PATH"] = str(server_file)
+            base_env["OUTPUT_DIR"] = str(output_dir)
+
+            test_cases = [
+                ("v2.4_beta-1", "2.4.beta-1"),
+                ("deadbeef", "0.0+deadbeef"),  # Bắt đầu bằng chữ cái -> thêm tiền tố 0.0+
+                ("v-git_hash", "0.0+-git.hash"),  # Bỏ 'v', bắt đầu bằng ký tự không phải số -> 0.0+
+            ]
+
+            for raw_ver, expected_ver in test_cases:
+                env = base_env.copy()
+                env["VERSION"] = raw_ver
+                res = subprocess.run(
+                    [str(_build_script)],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                self.assertEqual(res.returncode, 0, f"Build thất bại cho phiên bản {raw_ver}: {res.stderr}")
+
+                deb_path = output_dir / f"scrcpy-gui_{expected_ver}_amd64.deb"
+                self.assertTrue(deb_path.is_file(), f"Không tìm thấy deb file: {deb_path}")
+
+                f_res = subprocess.run(
+                    ["dpkg-deb", "-f", str(deb_path), "Version"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                self.assertEqual(f_res.stdout.strip(), expected_ver)
+
+    def test_default_version_from_git_describe(self):
+        """Kiểm tra khi không đặt VERSION thì script tự lấy và chuẩn hoá từ git describe."""
         if not self.has_dpkg_deb:
             self.skipTest("dpkg-deb không có sẵn trên hệ thống")
 
@@ -289,10 +347,24 @@ class TestDebPackage(unittest.TestCase):
             env["DIST_DIR"] = str(dist_dir)
             env["SERVER_PATH"] = str(server_file)
             env["OUTPUT_DIR"] = str(output_dir)
-            env["VERSION"] = "v2.4_beta-1"
+            env.pop("VERSION", None)
+
+            # Lấy output git describe thực tế từ repo
+            git_out = subprocess.run(
+                ["git", "describe", "--tags", "--always"],
+                cwd=str(_repo_root),
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            expected_ver = git_out.lstrip("vV").replace("_", ".")
+            expected_ver = "".join(c if (c.isalnum() or c in ".+~-") else "." for c in expected_ver)
+            if not (expected_ver and expected_ver[0].isdigit()):
+                expected_ver = f"0.0+{expected_ver}"
 
             res = subprocess.run(
                 [str(_build_script)],
+                cwd=str(tmp_path),
                 env=env,
                 capture_output=True,
                 text=True,
@@ -300,9 +372,8 @@ class TestDebPackage(unittest.TestCase):
             )
             self.assertEqual(res.returncode, 0, f"Build thất bại: {res.stderr}")
 
-            # Đã chuẩn hoá bỏ 'v' và đổi '_' thành '.' -> '2.4.beta-1'
-            deb_path = output_dir / "scrcpy-gui_2.4.beta-1_amd64.deb"
-            self.assertTrue(deb_path.is_file())
+            deb_path = output_dir / f"scrcpy-gui_{expected_ver}_amd64.deb"
+            self.assertTrue(deb_path.is_file(), f"Không tìm thấy deb file: {deb_path}")
 
             f_res = subprocess.run(
                 ["dpkg-deb", "-f", str(deb_path), "Version"],
@@ -310,7 +381,50 @@ class TestDebPackage(unittest.TestCase):
                 text=True,
                 check=True,
             )
-            self.assertEqual(f_res.stdout.strip(), "2.4.beta-1")
+            self.assertEqual(f_res.stdout.strip(), expected_ver)
+
+    def test_relative_paths(self):
+        """Kiểm tra chạy script với đường dẫn tương đối cho DIST_DIR, SERVER_PATH, OUTPUT_DIR từ thư mục bất kỳ."""
+        if not self.has_dpkg_deb:
+            self.skipTest("dpkg-deb không có sẵn trên hệ thống")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            dist_dir = tmp_path / "rel_dist"
+            dist_dir.mkdir()
+            output_dir = tmp_path / "rel_out"
+            output_dir.mkdir()
+
+            scrcpy_bin = dist_dir / "scrcpy"
+            scrcpy_bin.write_text("#!/bin/sh\nexit 0")
+            scrcpy_bin.chmod(0o755)
+
+            adb_bin = dist_dir / "adb"
+            adb_bin.write_text("#!/bin/sh\nexit 0")
+            adb_bin.chmod(0o755)
+
+            server_file = tmp_path / "rel_server"
+            server_file.write_text("server")
+
+            env = os.environ.copy()
+            # Dùng đường dẫn tương đối so với cwd (tmp_path)
+            env["DIST_DIR"] = "./rel_dist"
+            env["SERVER_PATH"] = "./rel_server"
+            env["OUTPUT_DIR"] = "./rel_out"
+            env["VERSION"] = "3.0.0"
+
+            res = subprocess.run(
+                [str(_build_script)],
+                cwd=str(tmp_path),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            self.assertEqual(res.returncode, 0, f"Build thất bại với đường dẫn tương đối: {res.stderr}")
+
+            deb_path = output_dir / "scrcpy-gui_3.0.0_amd64.deb"
+            self.assertTrue(deb_path.is_file(), f"File deb không tồn tại: {deb_path}")
 
 
 
