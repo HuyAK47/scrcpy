@@ -86,3 +86,61 @@ Nếu tệp cấu hình bị hỏng, ứng dụng tự động khôi phục về
 - `SCRCPY_BIN`: Đường dẫn tệp thực thi `scrcpy`.
 - `SCRCPY_SERVER_PATH`: Đường dẫn tệp `scrcpy-server` (được truyền nguyên vẹn sang cho scrcpy khi khởi chạy).
 - `XDG_CONFIG_HOME`: Thư mục lưu cấu hình người dùng (mặc định `~/.config`).
+
+## Build bộ cài
+
+Để tạo gói cài đặt `.deb` (`scrcpy-gui_<version>_amd64.deb`) cho Ubuntu (24.04 / 22.04 x86_64), cần chuẩn bị môi trường và thực hiện các bước sau:
+
+### 1. Cài đặt các gói phụ thuộc hệ thống (APT)
+
+Dựa theo cấu hình job `build-linux-x86_64` trong `.github/workflows/release.yml`:
+
+```bash
+sudo apt update
+sudo apt install -y meson ninja-build nasm ffmpeg libavcodec-dev \
+    libavdevice-dev libavformat-dev libavutil-dev libswresample-dev \
+    libusb-1.0-0 libusb-1.0-0-dev libv4l-dev \
+    libasound2-dev libpulse-dev \
+    libaudio-dev libfribidi-dev libjack-dev libsndio-dev libx11-dev libxext-dev \
+    libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
+    libxkbcommon-dev libdrm-dev libva-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev \
+    libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev libthai-dev \
+    libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev \
+    openjdk-17-jdk dpkg-deb python3 python3-tk
+```
+
+### 2. Thiết lập biến môi trường Android SDK
+
+Để build `scrcpy-server`, cần có Android SDK và thiết lập biến môi trường `ANDROID_HOME`:
+
+```bash
+export ANDROID_HOME=/path/to/android-sdk
+```
+
+### 3. Thứ tự các lệnh build và đóng gói
+
+Thực hiện tuần tự từ thư mục gốc dự án:
+
+1. **Build scrcpy-server**:
+   ```bash
+   release/build_server.sh
+   ```
+   (Tạo ra `release/work/build-server/server/scrcpy-server`)
+
+2. **Build scrcpy tĩnh và adb**:
+   ```bash
+   release/build_linux.sh x86_64
+   ```
+   (Tạo ra `release/work/build-linux-x86_64/dist/`)
+
+3. **Đóng gói file cài đặt `.deb`**:
+   ```bash
+   release/build_linux_gui_deb.sh
+   ```
+   (Tạo ra file `.deb` tại `release/output/scrcpy-gui_<version>_amd64.deb`)
+
+4. **Cài đặt và kiểm tra gói**:
+   ```bash
+   sudo apt install ./release/output/scrcpy-gui_*.deb
+   ```
+
