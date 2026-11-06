@@ -374,9 +374,10 @@ class TestDebPackage(unittest.TestCase):
             env["OUTPUT_DIR"] = str(output_dir)
             env.pop("VERSION", None)
 
-            # Lấy output git describe thực tế từ repo
+            # Lấy output git describe thực tế từ repo, chỉ theo tag release v*
+            # (bỏ qua tag khác như gui-v5.0.1-20)
             git_out = subprocess.run(
-                ["git", "describe", "--tags", "--always"],
+                ["git", "describe", "--tags", "--match", "v[0-9]*"],
                 cwd=str(_repo_root),
                 capture_output=True,
                 text=True,
@@ -407,6 +408,8 @@ class TestDebPackage(unittest.TestCase):
                 check=True,
             )
             self.assertEqual(f_res.stdout.strip(), expected_ver)
+            # Version mặc định phải bắt đầu bằng số (không rơi vào nhánh 0.0+)
+            self.assertTrue(expected_ver[0].isdigit(), expected_ver)
 
     def test_relative_paths(self):
         """Kiểm tra chạy script với đường dẫn tương đối cho DIST_DIR, SERVER_PATH, OUTPUT_DIR từ thư mục bất kỳ."""

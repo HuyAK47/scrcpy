@@ -26,7 +26,14 @@ cd "$ROOT_DIR"
 DIST_DIR="${USER_DIST_DIR:-$WORK_DIR/build-linux-x86_64/dist}"
 SERVER_PATH="${USER_SERVER_PATH:-$WORK_DIR/build-server/server/scrcpy-server}"
 OUTPUT_DIR="${USER_OUTPUT_DIR:-$OUTPUT_DIR}"
-RAW_VERSION="${USER_VERSION:-$VERSION}"
+if [[ -n "$USER_VERSION" ]]; then
+    RAW_VERSION="$USER_VERSION"
+else
+    # Only derive the version from scrcpy release tags (v*), so that other
+    # tags such as gui-v5.0.1-20 cannot produce a non-numeric version that
+    # sorts below the installed package.
+    RAW_VERSION="$(git describe --tags --match 'v[0-9]*' 2>/dev/null || echo "$VERSION")"
+fi
 
 # Check for required tools
 if ! command -v dpkg-deb >/dev/null 2>&1; then
