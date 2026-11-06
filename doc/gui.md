@@ -62,11 +62,33 @@ Nếu không tìm thấy, giao diện hiển thị thông báo cảnh báo rõ r
 
 Tất cả các lệnh adb đều chạy bất đồng bộ trong thread nền với timeout 10 giây, hiển thị tiến độ và kết quả trên thanh trạng thái.
 
-### 5. Tuỳ chọn cấu hình scrcpy
+### 5. Tab "Xem trước" và Lưới ảnh chụp màn hình (Device Preview Grid)
+
+Cửa sổ chính của ứng dụng sử dụng giao diện phân tab (`ttk.Notebook` theo chủ đề tối) gồm 2 tab: **"Thiết bị"** (toàn bộ tính năng danh sách và điều khiển chi tiết) và **"Xem trước"** (lưới ảnh chụp trực quan).
+
+- **Công tắc Bật xem trước**: Cho phép bật hoặc tắt tính năng xem trước. Mặc định là tắt (`False`) để tiết kiệm tài nguyên CPU, pin và băng thông. Khi tắt, các ô chỉ hiển thị thông tin placeholder và người dùng vẫn có thể bấm nút hoặc nhấp đúp để mở điều khiển scrcpy.
+- **Tạm dừng thông minh**: Quá trình chụp preview chỉ chạy khi tab "Xem trước" đang được chọn VÀ công tắc đang bật. Khi chuyển sang tab "Thiết bị" hoặc tắt công tắc, ứng dụng sẽ dừng ngay lập tức vòng chụp và huỷ bỏ các tiến trình chụp đang chạy.
+- **Chu kỳ làm mới tuỳ chọn**: Hỗ trợ các mốc chu kỳ làm mới 2s (mặc định), 5s hoặc 10s, được lưu tự động vào cấu hình người dùng.
+- **Lưới xem trước tự co giãn**:
+  - Tự động sắp xếp số cột phù hợp với chiều ngang cửa sổ và hỗ trợ cuộn dọc mượt mà khi kết nối nhiều thiết bị.
+  - Mỗi thiết bị ở trạng thái sẵn sàng (`device`) hiển thị thành một ô thẻ gồm: ảnh chụp màn hình thu nhỏ (lấy qua `adb exec-out screencap -p` và thu nhỏ theo tỷ lệ nguyên bằng `tk.PhotoImage.subsample`), tên máy, serial, chấm trạng thái và huy hiệu "Đang mở" nếu đang có cửa sổ scrcpy điều khiển.
+  - Thiết bị `unauthorized` hoặc `offline` hiển thị ô màu xám kèm thông báo trạng thái tương ứng, không thực hiện lệnh chụp.
+  - Chụp ảnh song song theo từng thiết bị trong thread pool với timeout 8 giây, có cơ chế bảo vệ tối đa 1 lệnh chụp đang chạy trên mỗi thiết bị nhằm tránh chồng chéo lệnh adb.
+  - Lỗi chụp của một thiết bị được cách ly hoàn toàn, không ảnh hưởng thiết bị khác; ô thẻ của thiết bị đó sẽ hiển thị thông báo lỗi ngắn và giữ lại ảnh chụp cũ.
+  - **Nhấp đúp vào ô thẻ hoặc bấm "Mở scrcpy"**: Mở cửa sổ điều khiển scrcpy tương ứng với cấu hình đã cài đặt (nếu máy đã mở cửa sổ trước đó thì không mở thêm).
+
+### 6. Chế độ "Xếp lưới live" (Live Tiling)
+
+- Nút **"Xếp lưới live"** / **"Đóng lưới live"**: Tự động mở đồng thời cho tất cả thiết bị đang sẵn sàng (`device`) một cửa sổ scrcpy nhỏ chỉ xem (chế độ `--no-control --no-audio --window-borderless --max-size 360 --max-fps 10 --video-bit-rate 1M`).
+- Các cửa sổ live được tính toán toạ độ và kích thước để xếp dạng bàn cờ theo kích thước màn hình máy tính (`winfo_screenwidth/height`).
+- Phiên live được quản lý tách biệt độc lập với phiên điều khiển, không ghi đè hay chặn phiên điều khiển của cùng thiết bị.
+- Bấm **"Đóng lưới live"** hoặc khi đóng ứng dụng sẽ tự động tắt toàn bộ các cửa sổ live.
+
+### 7. Tuỳ chọn cấu hình scrcpy
 
 Các tuỳ chọn được tự động lưu vào `~/.config/scrcpy-gui/settings.json` (tôn trọng biến môi trường `XDG_CONFIG_HOME`) và áp dụng cho các lần mở thiết bị tiếp theo:
 
-| Tuỳ chọn | Mô tả | Tham số scrcpy tương ứng |
+| Tuỳ chọn | Mô tả | Tham số scrcpy / cài đặt tương ứng |
 |---|---|---|
 | **Độ phân giải tối đa** | Giới hạn chiều dài/rộng lớn nhất: Không giới hạn / 1920 / 1280 / 1024 / 800 | `--max-size <size>` |
 | **Bitrate** | Tốc độ truyền video: 4M / 8M (mặc định) / 16M | `--video-bit-rate <bitrate>` |
@@ -77,10 +99,12 @@ Các tuỳ chọn được tự động lưu vào `~/.config/scrcpy-gui/settings
 | **Luôn ở trên** | Giữ cửa sổ scrcpy luôn nằm trên các cửa sổ khác | `--always-on-top` |
 | **Toàn màn hình** | Mở scrcpy ở chế độ toàn màn hình | `--fullscreen` |
 | **Tham số thêm** | Các cờ dòng lệnh scrcpy bổ sung (phân tách qua `shlex.split`) | Tuỳ biến thêm bởi người dùng |
+| **Bật xem trước** | Bật chụp và hiển thị ảnh thu nhỏ định kỳ ở tab Xem trước (mặc định: tắt) | Cài đặt `preview_enabled` |
+| **Chu kỳ làm mới** | Khoảng thời gian chụp lại xem trước: 2s (mặc định) / 5s / 10s | Cài đặt `preview_interval` |
 
 Nếu tệp cấu hình bị hỏng, ứng dụng tự động khôi phục về cài đặt mặc định mà không bị gián đoạn hoạt động.
 
-### 6. Biến môi trường hỗ trợ
+### 8. Biến môi trường hỗ trợ
 
 - `ADB`: Đường dẫn tệp thực thi `adb`.
 - `SCRCPY_BIN`: Đường dẫn tệp thực thi `scrcpy`.

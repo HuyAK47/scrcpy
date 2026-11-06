@@ -129,18 +129,22 @@ class Launcher:
         serial: str,
         model: str = "",
         settings: Optional[Settings] = None,
+        custom_cmd: Optional[List[str]] = None,
     ) -> ScrcpySession:
         """Khởi chạy scrcpy cho thiết bị serial."""
         with self._lock:
             if serial in self.sessions and self.sessions[serial].is_running():
                 return self.sessions[serial]
 
-            cmd = build_scrcpy_command(
-                serial=serial,
-                model=model,
-                settings=settings,
-                scrcpy_bin=self.scrcpy_bin,
-            )
+            if custom_cmd:
+                cmd = list(custom_cmd)
+            else:
+                cmd = build_scrcpy_command(
+                    serial=serial,
+                    model=model,
+                    settings=settings,
+                    scrcpy_bin=self.scrcpy_bin,
+                )
 
             # Đảm bảo giữ nguyên biến môi trường SCRCPY_SERVER_PATH nếu có
             env = os.environ.copy()

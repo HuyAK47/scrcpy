@@ -128,5 +128,18 @@ class TestThemeTk(unittest.TestCase):
         self.root.update()
 
 
+    def test_notebook_widget(self):
+        theme.apply_theme(self.root)
+        from tkinter import ttk
+        nb = ttk.Notebook(self.root)
+        nb.pack()
+        f1 = ttk.Frame(nb)
+        f2 = ttk.Frame(nb)
+        nb.add(f1, text="Thiết bị")
+        nb.add(f2, text="Xem trước")
+        self.root.update()
+        self.assertEqual(len(nb.tabs()), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
