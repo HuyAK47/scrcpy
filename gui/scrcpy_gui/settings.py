@@ -50,6 +50,9 @@ class Settings:
         else:
             interval_val = default.preview_interval
 
+        if interval_val not in (2, 5, 10):
+            interval_val = default.preview_interval
+
         return cls(
             max_size=str(data.get("max_size", default.max_size)),
             bitrate=str(data.get("bitrate", default.bitrate)),

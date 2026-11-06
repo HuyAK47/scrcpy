@@ -87,6 +87,11 @@ class TestSettings(unittest.TestCase):
         s_invalid = Settings.from_dict({"preview_interval": "abc"})
         self.assertEqual(s_invalid.preview_interval, 2)
 
+        # Out-of-range intervals (0, negative, arbitrary values) normalize to default (2)
+        for bad_val in (0, -1, 7, 100, "0s", "7s", "-3s"):
+            s_bad = Settings.from_dict({"preview_interval": bad_val})
+            self.assertEqual(s_bad.preview_interval, 2)
+
     def test_load_corrupted_json(self):
         cfg_file = self.temp_path / "corrupted.json"
         cfg_file.write_text("{invalid json format: missing quotes", encoding="utf-8")
