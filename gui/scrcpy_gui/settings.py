@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 MAX_SIZE_OPTIONS = ["Không giới hạn", "1920", "1280", "1024", "800"]
 BITRATE_OPTIONS = ["4M", "8M", "16M"]
 MAX_FPS_OPTIONS = ["Không giới hạn", "30", "60"]
+PREVIEW_INTERVAL_OPTIONS = ["2s", "5s", "10s"]
 
 
 @dataclass
@@ -24,6 +25,8 @@ class Settings:
     always_on_top: bool = False
     fullscreen: bool = False
     extra_args: str = ""
+    preview_enabled: bool = False
+    preview_interval: int = 2
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -34,6 +37,19 @@ class Settings:
             return cls()
 
         default = cls()
+
+        raw_interval = data.get("preview_interval", default.preview_interval)
+        if isinstance(raw_interval, str):
+            clean_int = raw_interval.rstrip("sS ").strip()
+            try:
+                interval_val = int(clean_int)
+            except ValueError:
+                interval_val = default.preview_interval
+        elif isinstance(raw_interval, (int, float)):
+            interval_val = int(raw_interval)
+        else:
+            interval_val = default.preview_interval
+
         return cls(
             max_size=str(data.get("max_size", default.max_size)),
             bitrate=str(data.get("bitrate", default.bitrate)),
@@ -44,6 +60,8 @@ class Settings:
             always_on_top=bool(data.get("always_on_top", default.always_on_top)),
             fullscreen=bool(data.get("fullscreen", default.fullscreen)),
             extra_args=str(data.get("extra_args", default.extra_args)),
+            preview_enabled=bool(data.get("preview_enabled", default.preview_enabled)),
+            preview_interval=interval_val,
         )
 
 

@@ -35,6 +35,8 @@ class TestSettings(unittest.TestCase):
         self.assertFalse(s.always_on_top)
         self.assertFalse(s.fullscreen)
         self.assertEqual(s.extra_args, "")
+        self.assertFalse(s.preview_enabled)
+        self.assertEqual(s.preview_interval, 2)
 
     def test_save_and_load(self):
         cfg_file = self.temp_path / "settings.json"
@@ -48,6 +50,8 @@ class TestSettings(unittest.TestCase):
             always_on_top=True,
             fullscreen=True,
             extra_args="--record=demo.mp4",
+            preview_enabled=True,
+            preview_interval=5,
         )
         self.assertTrue(save_settings(s, cfg_file))
         self.assertTrue(cfg_file.is_file())
@@ -62,6 +66,26 @@ class TestSettings(unittest.TestCase):
         self.assertTrue(loaded.always_on_top)
         self.assertTrue(loaded.fullscreen)
         self.assertEqual(loaded.extra_args, "--record=demo.mp4")
+        self.assertTrue(loaded.preview_enabled)
+        self.assertEqual(loaded.preview_interval, 5)
+
+    def test_from_dict_variations(self):
+        # Default when empty
+        s_empty = Settings.from_dict({})
+        self.assertFalse(s_empty.preview_enabled)
+        self.assertEqual(s_empty.preview_interval, 2)
+
+        # String format interval e.g. "5s", "10s"
+        s_str5 = Settings.from_dict({"preview_enabled": True, "preview_interval": "5s"})
+        self.assertTrue(s_str5.preview_enabled)
+        self.assertEqual(s_str5.preview_interval, 5)
+
+        s_str10 = Settings.from_dict({"preview_interval": "10s"})
+        self.assertEqual(s_str10.preview_interval, 10)
+
+        # Invalid interval falls back to default
+        s_invalid = Settings.from_dict({"preview_interval": "abc"})
+        self.assertEqual(s_invalid.preview_interval, 2)
 
     def test_load_corrupted_json(self):
         cfg_file = self.temp_path / "corrupted.json"
