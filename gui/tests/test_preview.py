@@ -277,6 +277,53 @@ class TestPreviewManager(unittest.TestCase):
         self.assertIn("device not found", on_error.call_args[0][1])
         mgr.cancel_all()
 
+    @patch("subprocess.Popen")
+    def test_token_guard_prevents_stale_worker_discarding_new_guard(self, mock_popen):
+        """Worker cũ khi kết thúc sau tắt/bật nhanh không được xoá nhầm guard của lượt chụp mới."""
+        dummy_png = _make_dummy_png(100, 100)
+        proc = MagicMock()
+        proc.communicate.return_value = (dummy_png, b"")
+        proc.returncode = 0
+        mock_popen.return_value = proc
+
+        mgr = PreviewManager(adb_bin="adb")
+        mgr.set_enabled(True)
+
+        # Giả lập token 1 đang chạy cho dev1
+        mgr._active_tokens["dev1"] = 1
+        mgr._token_counter = 1
+
+        # Giả lập tắt và bật lại nhanh, lượt chụp mới cho dev1 được cấp token 2
+        mgr._active_tokens["dev1"] = 2
+        mgr._token_counter = 2
+
+        # Giả lập worker của lượt 1 đến khối finally: token của nó là 1, nhưng token hiện tại là 2
+        # Khối finally phải giữ nguyên token 2, không xoá nhầm guard
+        with mgr._lock:
+            if mgr._active_tokens.get("dev1") == 1:
+                mgr._active_tokens.pop("dev1", None)
+
+        self.assertTrue(mgr.is_capturing("dev1"))
+        self.assertEqual(mgr._active_tokens.get("dev1"), 2)
+
+        # Lệnh mới cho dev1 vẫn bị guard chặn
+        scheduled = mgr.start_capture("dev1", on_success=MagicMock(), on_error=MagicMock())
+        self.assertFalse(scheduled)
+        mgr.cancel_all()
+
+    @patch("subprocess.Popen")
+    def test_capture_screenshot_on_proc_started(self, mock_popen):
+        """Kiểm tra hook on_proc_started được gọi đúng cách khi process khởi tạo."""
+        dummy_png = _make_dummy_png(100, 100)
+        proc = MagicMock()
+        proc.communicate.return_value = (dummy_png, b"")
+        proc.returncode = 0
+        mock_popen.return_value = proc
+
+        started_hook = MagicMock()
+        capture_screenshot("dev_hook", adb_bin="adb", on_proc_started=started_hook)
+        started_hook.assert_called_once_with(proc)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -60,6 +60,7 @@ def capture_screenshot(
     serial: str,
     adb_bin: Optional[str] = None,
     timeout: float = DEFAULT_CAPTURE_TIMEOUT,
+    on_proc_started: Optional[Callable[[subprocess.Popen], None]] = None,
 ) -> bytes:
     """Chụp màn hình thiết bị Android qua lệnh 'adb exec-out screencap -p'.
 
@@ -76,6 +77,17 @@ def capture_screenshot(
         )
     except Exception as e:
         raise PreviewCaptureError(f"Không thể khởi chạy adb: {e}") from e
+
+    if on_proc_started is not None:
+        try:
+            on_proc_started(proc)
+        except Exception:
+            try:
+                proc.kill()
+                proc.communicate()
+            except Exception:
+                pass
+            raise
 
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
@@ -187,7 +199,8 @@ class PreviewManager:
         self.max_workers = max_workers
         self._lock = threading.Lock()
         self._enabled = False
-        self._active_serials: Set[str] = set()
+        self._active_tokens: Dict[str, int] = {}
+        self._token_counter: int = 0
         self._active_procs: Dict[str, subprocess.Popen] = {}
         self._executor: Optional[ThreadPoolExecutor] = None
 
@@ -195,6 +208,12 @@ class PreviewManager:
     def is_enabled(self) -> bool:
         with self._lock:
             return self._enabled
+
+    @property
+    def _active_serials(self) -> Set[str]:
+        """Tập hợp các serial đang chụp (hỗ trợ tương thích ngược)."""
+        with self._lock:
+            return set(self._active_tokens.keys())
 
     def set_enabled(self, enabled: bool) -> None:
         with self._lock:
@@ -205,7 +224,7 @@ class PreviewManager:
     def is_capturing(self, serial: str) -> bool:
         """Kiểm tra xem thiết bị có đang trong tiến trình chụp hay không."""
         with self._lock:
-            return serial in self._active_serials
+            return serial in self._active_tokens
 
     def start_capture(
         self,
@@ -220,9 +239,11 @@ class PreviewManager:
         with self._lock:
             if not self._enabled:
                 return False
-            if serial in self._active_serials:
+            if serial in self._active_tokens:
                 return False
-            self._active_serials.add(serial)
+            self._token_counter += 1
+            token = self._token_counter
+            self._active_tokens[serial] = token
             if self._executor is None:
                 self._executor = ThreadPoolExecutor(max_workers=self.max_workers)
             executor = self._executor
@@ -231,79 +252,55 @@ class PreviewManager:
             try:
                 data = self._execute_capture(serial)
                 with self._lock:
-                    if not self._enabled:
+                    if not self._enabled or self._active_tokens.get(serial) != token:
                         return
                 on_success(serial, data)
             except PreviewCaptureError as e:
                 with self._lock:
-                    if not self._enabled:
+                    if not self._enabled or self._active_tokens.get(serial) != token:
                         return
                 on_error(serial, str(e))
             except Exception as e:
                 with self._lock:
-                    if not self._enabled:
+                    if not self._enabled or self._active_tokens.get(serial) != token:
                         return
                 on_error(serial, f"Lỗi không xác định: {e}")
             finally:
                 with self._lock:
-                    self._active_serials.discard(serial)
+                    if self._active_tokens.get(serial) == token:
+                        self._active_tokens.pop(serial, None)
 
-        executor.submit(worker)
+        future = executor.submit(worker)
+
+        def _cleanup(fut):
+            with self._lock:
+                if self._active_tokens.get(serial) == token:
+                    self._active_tokens.pop(serial, None)
+
+        future.add_done_callback(_cleanup)
         return True
 
     def _execute_capture(self, serial: str) -> bytes:
-        bin_path = self.adb_bin or find_adb() or "adb"
-        cmd = [bin_path, "-s", serial, "exec-out", "screencap", "-p"]
-
         with self._lock:
             if not self._enabled:
                 raise PreviewCaptureError("Preview đã bị tắt")
 
+        def _on_started(proc: subprocess.Popen) -> None:
+            with self._lock:
+                if not self._enabled:
+                    raise PreviewCaptureError("Preview đã bị tắt")
+                self._active_procs[serial] = proc
+
         try:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+            return capture_screenshot(
+                serial=serial,
+                adb_bin=self.adb_bin,
+                timeout=self.timeout,
+                on_proc_started=_on_started,
             )
-        except Exception as e:
-            raise PreviewCaptureError(f"Không thể khởi chạy adb: {e}") from e
-
-        with self._lock:
-            if not self._enabled:
-                proc.kill()
-                proc.communicate()
-                raise PreviewCaptureError("Preview đã bị tắt")
-            self._active_procs[serial] = proc
-
-        try:
-            stdout, stderr = proc.communicate(timeout=self.timeout)
-        except subprocess.TimeoutExpired as e:
-            try:
-                proc.kill()
-                proc.communicate()
-            except Exception:
-                pass
-            raise PreviewCaptureError(f"Hết thời gian chụp màn hình ({self.timeout}s)") from e
-        except Exception as e:
-            try:
-                proc.kill()
-                proc.communicate()
-            except Exception:
-                pass
-            raise PreviewCaptureError(f"Lỗi chụp màn hình: {e}") from e
         finally:
             with self._lock:
                 self._active_procs.pop(serial, None)
-
-        if proc.returncode != 0:
-            err_msg = stderr.decode("utf-8", errors="replace").strip() if stderr else f"Mã lỗi {proc.returncode}"
-            raise PreviewCaptureError(f"Chụp thất bại: {err_msg}")
-
-        if not stdout or not stdout.startswith(b"\x89PNG\r\n\x1a\n"):
-            snippet = stdout[:60].decode("utf-8", errors="replace").strip() if stdout else "Không có dữ liệu"
-            raise PreviewCaptureError(f"Dữ liệu ảnh không hợp lệ: {snippet}")
-
-        return stdout
 
     def cancel_all(self) -> None:
         """Dừng tất cả các lệnh chụp đang chạy."""
@@ -317,7 +314,8 @@ class PreviewManager:
             except OSError:
                 pass
         self._active_procs.clear()
-        self._active_serials.clear()
+        # Không xóa toàn bộ _active_tokens ở đây để tránh xoá nhầm guard khi worker cũ chưa dừng.
+        # Worker hoặc callback _cleanup của lượt chụp sẽ chỉ giải phóng guard khi token còn khớp.
         if self._executor is not None:
             self._executor.shutdown(wait=False, cancel_futures=True)
             self._executor = None
