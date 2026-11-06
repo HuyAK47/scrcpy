@@ -141,5 +141,21 @@ class TestLauncher(unittest.TestCase):
         mock_proc.terminate.assert_called_once()
 
 
+    @patch("subprocess.Popen")
+    def test_launcher_custom_cmd(self, mock_popen):
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None
+        mock_proc.stderr = iter([])
+        mock_popen.return_value = mock_proc
+
+        launcher = Launcher(scrcpy_bin="scrcpy")
+        custom = ["scrcpy", "-s", "dev_custom", "--no-control", "--max-size", "360"]
+        launcher.start(serial="dev_custom", custom_cmd=custom)
+
+        self.assertTrue(launcher.is_running("dev_custom"))
+        mock_popen.assert_called_once()
+        self.assertEqual(mock_popen.call_args[0][0], custom)
+
+
 if __name__ == "__main__":
     unittest.main()
