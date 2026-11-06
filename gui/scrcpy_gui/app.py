@@ -720,8 +720,14 @@ class ScrcpyApp:
         self._bind_mousewheel(self.preview_grid_frame)
 
     def _bind_mousewheel(self, widget: tk.Widget) -> None:
-        """Gắn sự kiện cuộn chuột linh hoạt trên nhiều nền tảng."""
+        """Gắn sự kiện cuộn chuột linh hoạt trên nhiều nền tảng cho widget và tất cả widget con."""
         def on_mousewheel(event):
+            try:
+                current = self.notebook.select()
+                if current != str(self.tab_preview) and self.notebook.tab(current, "text") != "Xem trước":
+                    return
+            except Exception:
+                pass
             if event.num == 4:
                 self.preview_canvas.yview_scroll(-1, "units")
             elif event.num == 5:
@@ -729,9 +735,14 @@ class ScrcpyApp:
             elif event.delta:
                 self.preview_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
-        widget.bind("<Button-4>", on_mousewheel)
-        widget.bind("<Button-5>", on_mousewheel)
-        widget.bind("<MouseWheel>", on_mousewheel)
+        def bind_recursive(w: tk.Widget) -> None:
+            w.bind("<Button-4>", on_mousewheel, add="+")
+            w.bind("<Button-5>", on_mousewheel, add="+")
+            w.bind("<MouseWheel>", on_mousewheel, add="+")
+            for child in w.winfo_children():
+                bind_recursive(child)
+
+        bind_recursive(widget)
 
     def _on_canvas_configure(self, event) -> None:
         """Tự động co giãn bề ngang frame con theo canvas và sắp lại cột."""
@@ -982,6 +993,7 @@ class ScrcpyApp:
         """Đồng bộ lưới xem trước với danh sách thiết bị hiện có."""
         current_serials = set(self.devices_by_serial.keys())
         existing_serials = set(self._preview_cards.keys())
+        new_serials = current_serials - existing_serials
 
         # Gỡ bỏ các thẻ thiết bị đã rút
         for s in existing_serials - current_serials:
@@ -998,6 +1010,7 @@ class ScrcpyApp:
                     dot_registry=self.dot_registry,
                     on_open=self._on_preview_card_double_click,
                 )
+                self._bind_mousewheel(card)
                 self._preview_cards[serial] = card
             else:
                 card = self._preview_cards[serial]
@@ -1016,10 +1029,11 @@ class ScrcpyApp:
 
         self._relayout_preview_grid()
 
-        # Nếu đang ở tab xem trước và có thiết bị mới chưa có ảnh, kích hoạt chụp
+        # Nếu đang ở tab xem trước và có thiết bị mới xuất hiện, kích hoạt chụp ngay
         if self._is_preview_active():
-            for serial, dev in self.devices_by_serial.items():
-                if dev.state == "device" and self._preview_cards[serial].current_photo is None:
+            for serial in new_serials:
+                dev = self.devices_by_serial.get(serial)
+                if dev and dev.state == "device":
                     self.preview_manager.start_capture(
                         serial=serial,
                         on_success=self._on_preview_capture_success,
@@ -1416,18 +1430,6 @@ class ScrcpyApp:
 
     def _on_closing(self) -> None:
         """Xử lý đóng ứng dụng."""
-        # Dừng các tiến trình và tác vụ xem trước
-        if hasattr(self, "preview_manager"):
-            self.preview_manager.cancel_all()
-        if hasattr(self, "live_launcher"):
-            self.live_launcher.stop_all()
-        if getattr(self, "_preview_timer_id", None) is not None:
-            try:
-                self.root.after_cancel(self._preview_timer_id)
-            except Exception:
-                pass
-            self._preview_timer_id = None
-
         if self.launcher.has_active_sessions():
             # Hỏi người dùng có muốn dừng các cửa sổ đang mở không
             ans = messagebox.askyesnocancel(
@@ -1443,6 +1445,18 @@ class ScrcpyApp:
             elif ans is True:
                 # Dừng tất cả rồi thoát
                 self.launcher.stop_all()
+
+        # Dừng các tiến trình và tác vụ xem trước sau khi xác nhận thoát
+        if hasattr(self, "preview_manager"):
+            self.preview_manager.cancel_all()
+        if hasattr(self, "live_launcher"):
+            self.live_launcher.stop_all()
+        if getattr(self, "_preview_timer_id", None) is not None:
+            try:
+                self.root.after_cancel(self._preview_timer_id)
+            except Exception:
+                pass
+            self._preview_timer_id = None
 
         self._closing = True
         self.root.destroy()

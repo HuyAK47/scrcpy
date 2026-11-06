@@ -291,6 +291,99 @@ class TestScrcpyApp(unittest.TestCase):
             mock_stop.assert_called_once()
             self.assertEqual(self.gui.btn_live_tiling.cget("text"), "⊞  Xếp lưới live")
 
+    def test_update_preview_grid_only_captures_new_devices_immediately(self):
+        """Chỉ thiết bị MỚI xuất hiện mới kích hoạt chụp ngay, thiết bị cũ chụp lỗi chờ theo chu kỳ."""
+        self.gui.notebook.select(self.gui.tab_preview)
+        self.gui.var_preview_enabled.set(True)
+        self.gui.settings.preview_enabled = True
+
+        dev1 = adb.DeviceInfo(
+            serial="dev_1",
+            state="device",
+            model="Phone 1",
+            product="",
+            device="",
+            transport="usb",
+        )
+
+        with patch.object(self.gui.preview_manager, "start_capture") as mock_cap:
+            # dev1 xuất hiện lần đầu -> kích hoạt chụp
+            self.gui._on_device_list_ready([dev1])
+            mock_cap.assert_called_once_with(
+                serial="dev_1",
+                on_success=self.gui._on_preview_capture_success,
+                on_error=self.gui._on_preview_capture_error,
+            )
+
+        with patch.object(self.gui.preview_manager, "start_capture") as mock_cap:
+            # Lần refresh sau dev1 vẫn chưa có ảnh nhưng đã tồn tại -> không chụp lại ở refresh
+            self.gui._on_device_list_ready([dev1])
+            mock_cap.assert_not_called()
+
+        dev2 = adb.DeviceInfo(
+            serial="dev_2",
+            state="device",
+            model="Phone 2",
+            product="",
+            device="",
+            transport="usb",
+        )
+        with patch.object(self.gui.preview_manager, "start_capture") as mock_cap:
+            # dev2 xuất hiện mới -> chỉ chụp cho dev2, không gọi dev1
+            self.gui._on_device_list_ready([dev1, dev2])
+            mock_cap.assert_called_once_with(
+                serial="dev_2",
+                on_success=self.gui._on_preview_capture_success,
+                on_error=self.gui._on_preview_capture_error,
+            )
+
+    def test_on_closing_cancel_preserves_live_and_preview(self):
+        """Khi có phiên scrcpy và người dùng chọn Huỷ thoát, không dừng live session hay preview."""
+        with patch.object(self.gui.launcher, "has_active_sessions", return_value=True), \
+             patch("tkinter.messagebox.askyesnocancel", return_value=None), \
+             patch.object(self.gui.preview_manager, "cancel_all") as mock_prev_cancel, \
+             patch.object(self.gui.live_launcher, "stop_all") as mock_live_stop, \
+             patch.object(self.gui.root, "destroy") as mock_destroy:
+            self.gui._on_closing()
+            mock_prev_cancel.assert_not_called()
+            mock_live_stop.assert_not_called()
+            mock_destroy.assert_not_called()
+            self.assertFalse(self.gui._closing)
+
+    def test_on_closing_confirm_stops_live_and_preview(self):
+        """Khi xác nhận thoát, dừng đầy đủ launcher, live launcher, preview manager."""
+        with patch.object(self.gui.launcher, "has_active_sessions", return_value=True), \
+             patch("tkinter.messagebox.askyesnocancel", return_value=True), \
+             patch.object(self.gui.launcher, "stop_all") as mock_scrcpy_stop, \
+             patch.object(self.gui.preview_manager, "cancel_all") as mock_prev_cancel, \
+             patch.object(self.gui.live_launcher, "stop_all") as mock_live_stop, \
+             patch.object(self.gui.root, "destroy") as mock_destroy:
+            self.gui._on_closing()
+            mock_scrcpy_stop.assert_called_once()
+            mock_prev_cancel.assert_called_once()
+            mock_live_stop.assert_called_once()
+            mock_destroy.assert_called_once()
+            self.assertTrue(self.gui._closing)
+
+    def test_preview_card_mousewheel_bindings(self):
+        """Kiểm tra sự kiện cuộn chuột được gắn lên card và các widget con."""
+        dev = adb.DeviceInfo(
+            serial="dev_scroll",
+            state="device",
+            model="Scroll Phone",
+            product="",
+            device="",
+            transport="usb",
+        )
+        self.gui._on_device_list_ready([dev])
+        card = self.gui._preview_cards["dev_scroll"]
+
+        for w in (card, card.lbl_model, card.img_container, card.lbl_image):
+            binds = w.bind()
+            self.assertIn("<Button-4>", binds)
+            self.assertIn("<Button-5>", binds)
+            self.assertIn("<MouseWheel>", binds)
+
 
 if __name__ == "__main__":
     unittest.main()
