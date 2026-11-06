@@ -7,15 +7,23 @@ import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
-from typing import Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from . import adb
 from .binaries import find_adb, find_scrcpy
 from .launcher import Launcher
+from .preview import (
+    PreviewManager,
+    build_live_command,
+    compute_subsample_factor,
+    compute_tile_geometry,
+    parse_png_dimensions,
+)
 from .settings import (
     BITRATE_OPTIONS,
     MAX_FPS_OPTIONS,
     MAX_SIZE_OPTIONS,
+    PREVIEW_INTERVAL_OPTIONS,
     Settings,
     load_settings,
     save_settings,
@@ -26,6 +34,7 @@ from .theme import (
     BANNER_WARN_FG,
     BG_CARD,
     BG_DARK,
+    BG_INPUT,
     BORDER,
     STATUS_OFFLINE,
     STATUS_ONLINE,
@@ -61,14 +70,190 @@ def set_window_icon(root: tk.Tk, icon_path: Path = APP_ICON_PATH) -> bool:
     return True
 
 
+class PreviewCard(Card):
+    """Ô hiển thị ảnh thu nhỏ và thông tin cho 1 thiết bị trong tab Xem trước."""
+
+    def __init__(
+        self,
+        master: tk.Widget,
+        dev: adb.DeviceInfo,
+        dot_registry: Any,
+        on_open: Callable[[adb.DeviceInfo], None],
+    ):
+        super().__init__(master, padding=(10, 8), width=210)
+        self.dev = dev
+        self.dot_registry = dot_registry
+        self.on_open = on_open
+        self.current_photo: Optional[tk.PhotoImage] = None
+
+        self._build_ui()
+        self.update_device_info(dev, is_running=False, preview_enabled=False)
+
+    def _build_ui(self) -> None:
+        # 1. Hàng tiêu đề: chấm trạng thái + tên máy + badge "Đang mở"
+        header = tk.Frame(self, bg=self.bg_color)
+        header.pack(fill=tk.X, pady=(0, 2))
+
+        self.lbl_dot = tk.Label(header, bg=self.bg_color)
+        self.lbl_dot.pack(side=tk.LEFT, padx=(0, 4))
+
+        self.lbl_model = tk.Label(
+            header,
+            text=self.dev.display_model,
+            bg=self.bg_color,
+            fg=TEXT_PRIMARY,
+            font=get_font(9, "bold"),
+            anchor=tk.W,
+        )
+        self.lbl_model.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        self.lbl_badge = tk.Label(
+            header,
+            text="Đang mở",
+            bg="#134e4a",
+            fg="#2dd4bf",
+            font=get_font(8, "bold"),
+            padx=4,
+            pady=1,
+        )
+
+        # 2. Hàng Serial
+        self.lbl_serial = tk.Label(
+            self,
+            text=self.dev.serial,
+            bg=self.bg_color,
+            fg=TEXT_SECONDARY,
+            font=get_mono_font(8),
+            anchor=tk.W,
+        )
+        self.lbl_serial.pack(fill=tk.X, pady=(0, 6))
+
+        # 3. Khung hiển thị ảnh thu nhỏ (kích thước cố định để lưới đồng đều)
+        self.img_container = tk.Frame(self, bg=BG_INPUT, width=190, height=220)
+        self.img_container.pack_propagate(False)
+        self.img_container.pack(fill=tk.X, pady=(0, 4))
+
+        self.lbl_image = tk.Label(
+            self.img_container,
+            bg=BG_INPUT,
+            fg=TEXT_MUTED,
+            font=get_font(8),
+            justify=tk.CENTER,
+            wraplength=170,
+        )
+        self.lbl_image.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
+
+        # 4. Nhãn hiển thị thông báo lỗi ngắn nếu có
+        self.lbl_error = tk.Label(
+            self,
+            text="",
+            bg=self.bg_color,
+            fg="#f87171",
+            font=get_font(8),
+            wraplength=190,
+            justify=tk.CENTER,
+        )
+        self.lbl_error.pack(fill=tk.X, pady=(0, 4))
+
+        # 5. Nút bấm mở scrcpy
+        self.btn_open = ttk.Button(
+            self,
+            text="Mở scrcpy",
+            command=self._on_btn_click,
+            style="Secondary.TButton",
+        )
+        self.btn_open.pack(fill=tk.X)
+
+        # Gắn double-click cho các widget trừ nút bấm
+        for w in (self, header, self.lbl_dot, self.lbl_model, self.lbl_serial, self.img_container, self.lbl_image, self.lbl_error):
+            w.bind("<Double-1>", lambda e: self.on_open(self.dev))
+
+    def _on_btn_click(self) -> None:
+        self.on_open(self.dev)
+
+    def update_device_info(
+        self,
+        dev: adb.DeviceInfo,
+        is_running: bool,
+        preview_enabled: bool,
+    ) -> None:
+        self.dev = dev
+        self.lbl_model.config(text=dev.display_model)
+        self.lbl_serial.config(text=dev.serial)
+
+        # Cập nhật chấm trạng thái
+        state_key = "running" if is_running else dev.state
+        dot_img = self.dot_registry.get(state_key) if self.dot_registry else None
+        if dot_img:
+            self.lbl_dot.config(image=dot_img)
+
+        # Cập nhật badge đang mở
+        if is_running:
+            self.lbl_badge.pack(side=tk.RIGHT)
+        else:
+            self.lbl_badge.pack_forget()
+
+        # Cập nhật nút điều khiển
+        if is_running:
+            self.btn_open.config(text="Đang hiển thị", state=tk.DISABLED)
+        elif dev.state == "device":
+            self.btn_open.config(text="Mở scrcpy", state=tk.NORMAL)
+        else:
+            self.btn_open.config(text=dev.state_display, state=tk.DISABLED)
+
+        # Cập nhật khung hình ảnh preview
+        if dev.state != "device":
+            self.current_photo = None
+            self.img_container.config(bg="#1a202c")
+            self.lbl_image.config(
+                image="",
+                text=f"⚠️ {dev.state_display}\n(Không có xem trước)",
+                bg="#1a202c",
+                fg=TEXT_MUTED,
+            )
+            self.lbl_error.config(text="")
+        elif not preview_enabled:
+            self.current_photo = None
+            self.img_container.config(bg=BG_INPUT)
+            self.lbl_image.config(
+                image="",
+                text="Xem trước đang tắt\nNhấp đúp hoặc bấm Mở",
+                bg=BG_INPUT,
+                fg=TEXT_MUTED,
+            )
+            self.lbl_error.config(text="")
+        else:
+            self.img_container.config(bg=BG_INPUT)
+            self.lbl_image.config(bg=BG_INPUT)
+            if self.current_photo:
+                self.lbl_image.config(image=self.current_photo, text="")
+            else:
+                self.lbl_image.config(image="", text="Đang chụp...", fg=TEXT_MUTED)
+
+    def set_image(self, photo: tk.PhotoImage) -> None:
+        """Cập nhật ảnh chụp màn hình thu nhỏ mới."""
+        self.current_photo = photo
+        self.lbl_image.config(image=self.current_photo, text="")
+        self.lbl_error.config(text="")
+
+    def set_error(self, err_msg: str) -> None:
+        """Cập nhật lỗi chụp: hiển thị thông báo ngắn và giữ ảnh cũ nếu có."""
+        short_err = err_msg.splitlines()[0] if err_msg else "Lỗi chụp"
+        if len(short_err) > 38:
+            short_err = short_err[:35] + "..."
+        self.lbl_error.config(text=f"⚠️ {short_err}")
+        if self.current_photo is None:
+            self.lbl_image.config(image="", text=f"⚠️ {short_err}", fg="#f87171")
+
+
 class ScrcpyApp:
     """Ứng dụng giao diện chính."""
 
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("scrcpy GUI - Điều khiển thiết bị Android")
-        self.root.geometry("860x700")
-        self.root.minsize(760, 580)
+        self.root.geometry("960x720")
+        self.root.minsize(800, 600)
 
         # Áp dụng chủ đề tối công nghệ và quản lý chấm trạng thái
         self.dot_registry = apply_theme(self.root)
@@ -79,7 +264,14 @@ class ScrcpyApp:
 
         # Quản lý tiến trình & cài đặt
         self.launcher = Launcher(scrcpy_bin=self.scrcpy_bin)
+        self.live_launcher = Launcher(scrcpy_bin=self.scrcpy_bin)
         self.settings: Settings = load_settings()
+
+        # Quản lý xem trước preview
+        self.preview_manager = PreviewManager(adb_bin=self.adb_bin, max_workers=4, timeout=8.0)
+        self._preview_timer_id: Optional[str] = None
+        self._preview_cards: Dict[str, PreviewCard] = {}
+        self._last_canvas_width: Optional[int] = None
 
         # Bộ nhớ thiết bị hiện tại {serial: DeviceInfo}
         self.devices_by_serial: Dict[str, adb.DeviceInfo] = {}
@@ -93,23 +285,34 @@ class ScrcpyApp:
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
 
     def _init_ui(self) -> None:
-        """Khởi tạo bố cục giao diện dạng thẻ."""
+        """Khởi tạo bố cục giao diện dạng thẻ với Notebook."""
         main_container = tk.Frame(self.root, bg=BG_DARK, padx=16, pady=12)
         main_container.pack(fill=tk.BOTH, expand=True)
 
         # 1. Cảnh báo nếu thiếu binary
         self._init_banner(main_container)
 
-        # 2. Khung kết nối Wi-Fi
-        self._init_wifi_frame(main_container)
+        # 2. Bảng phân tab Notebook: "Thiết bị" và "Xem trước"
+        self.notebook = ttk.Notebook(main_container)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
 
-        # 3. Khung danh sách thiết bị
-        self._init_device_list_frame(main_container)
+        self.tab_devices = tk.Frame(self.notebook, bg=BG_DARK)
+        self.tab_preview = tk.Frame(self.notebook, bg=BG_DARK)
 
-        # 4. Khung tuỳ chọn cấu hình
-        self._init_settings_frame(main_container)
+        self.notebook.add(self.tab_devices, text="Thiết bị")
+        self.notebook.add(self.tab_preview, text="Xem trước")
 
-        # 5. Thanh trạng thái dưới đáy
+        # Nội dung tab "Thiết bị" (giữ nguyên toàn bộ hành vi)
+        self._init_wifi_frame(self.tab_devices)
+        self._init_device_list_frame(self.tab_devices)
+        self._init_settings_frame(self.tab_devices)
+
+        # Nội dung tab "Xem trước"
+        self._init_preview_tab(self.tab_preview)
+
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+
+        # 3. Thanh trạng thái dưới đáy
         self._init_status_bar()
 
     def _init_banner(self, parent: tk.Widget) -> None:
@@ -427,6 +630,137 @@ class ScrcpyApp:
         entry_extra.pack(side=tk.LEFT, fill=tk.X, expand=True)
         entry_extra.bind("<FocusOut>", lambda e: self._save_current_settings())
 
+    def _init_preview_tab(self, parent: tk.Widget) -> None:
+        """Khởi tạo giao diện lưới xem trước màn hình trong tab 'Xem trước'."""
+        # 1. Thanh điều khiển trên đỉnh tab Xem trước
+        ctrl_card = Card(parent, padding=(14, 10))
+        ctrl_card.pack(fill=tk.X, pady=(0, 10))
+
+        ctrl_inner = tk.Frame(ctrl_card, bg=BG_CARD)
+        ctrl_inner.pack(fill=tk.X)
+
+        # Công tắc Bật xem trước
+        self.var_preview_enabled = tk.BooleanVar(value=self.settings.preview_enabled)
+        self.chk_preview_enabled = ttk.Checkbutton(
+            ctrl_inner,
+            text="Bật xem trước",
+            variable=self.var_preview_enabled,
+            command=self._on_preview_toggle,
+        )
+        self.chk_preview_enabled.pack(side=tk.LEFT, padx=(0, 16))
+
+        # Chu kỳ làm mới
+        tk.Label(
+            ctrl_inner,
+            text="Chu kỳ làm mới:",
+            bg=BG_CARD,
+            fg=TEXT_PRIMARY,
+            font=get_font(9),
+        ).pack(side=tk.LEFT, padx=(0, 6))
+
+        self.var_preview_interval = tk.StringVar(value=f"{self.settings.preview_interval}s")
+        self.cb_preview_interval = ttk.Combobox(
+            ctrl_inner,
+            textvariable=self.var_preview_interval,
+            values=PREVIEW_INTERVAL_OPTIONS,
+            state="readonly",
+            width=6,
+        )
+        self.cb_preview_interval.pack(side=tk.LEFT, padx=(0, 16))
+        self.cb_preview_interval.bind("<<ComboboxSelected>>", self._on_preview_interval_changed)
+
+        # Nút Xếp lưới live
+        self.btn_live_tiling = ttk.Button(
+            ctrl_inner,
+            text="⊞  Xếp lưới live",
+            command=self._on_toggle_live_tiling,
+            style="Secondary.TButton",
+        )
+        self.btn_live_tiling.pack(side=tk.RIGHT)
+
+        # 2. Vùng lưới cuộn được chứa các ô thiết bị
+        grid_container = tk.Frame(parent, bg=BG_DARK)
+        grid_container.pack(fill=tk.BOTH, expand=True)
+
+        self.preview_canvas = tk.Canvas(grid_container, bg=BG_DARK, highlightthickness=0)
+        preview_scrollbar = ttk.Scrollbar(
+            grid_container,
+            orient=tk.VERTICAL,
+            command=self.preview_canvas.yview,
+        )
+        self.preview_canvas.configure(yscrollcommand=preview_scrollbar.set)
+
+        self.preview_grid_frame = tk.Frame(self.preview_canvas, bg=BG_DARK)
+        self._canvas_window_id = self.preview_canvas.create_window(
+            (0, 0),
+            window=self.preview_grid_frame,
+            anchor="nw",
+        )
+
+        self.preview_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        preview_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Dòng nhắc khi chưa có thiết bị nào
+        self.lbl_preview_empty = tk.Label(
+            self.preview_grid_frame,
+            text="Chưa kết nối thiết bị nào. Cắm cáp USB (đã bật Gỡ lỗi USB) hoặc nhập IP ở tab Thiết bị để kết nối Wi-Fi.",
+            bg=BG_DARK,
+            fg=TEXT_MUTED,
+            font=get_font(9),
+        )
+        self.lbl_preview_empty.pack(fill=tk.X, pady=(20, 0))
+
+        # Ràng buộc cấu hình thay đổi kích thước và cuộn
+        self.preview_canvas.bind("<Configure>", self._on_canvas_configure)
+        self.preview_grid_frame.bind(
+            "<Configure>",
+            lambda e: self.preview_canvas.configure(scrollregion=self.preview_canvas.bbox("all")),
+        )
+        self._bind_mousewheel(self.preview_canvas)
+        self._bind_mousewheel(self.preview_grid_frame)
+
+    def _bind_mousewheel(self, widget: tk.Widget) -> None:
+        """Gắn sự kiện cuộn chuột linh hoạt trên nhiều nền tảng."""
+        def on_mousewheel(event):
+            if event.num == 4:
+                self.preview_canvas.yview_scroll(-1, "units")
+            elif event.num == 5:
+                self.preview_canvas.yview_scroll(1, "units")
+            elif event.delta:
+                self.preview_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        widget.bind("<Button-4>", on_mousewheel)
+        widget.bind("<Button-5>", on_mousewheel)
+        widget.bind("<MouseWheel>", on_mousewheel)
+
+    def _on_canvas_configure(self, event) -> None:
+        """Tự động co giãn bề ngang frame con theo canvas và sắp lại cột."""
+        if getattr(self, "_last_canvas_width", None) != event.width:
+            self._last_canvas_width = event.width
+            self.preview_canvas.itemconfig(self._canvas_window_id, width=event.width)
+            self._relayout_preview_grid()
+
+    def _relayout_preview_grid(self) -> None:
+        """Sắp xếp lại các thẻ thiết bị theo số cột vừa vặn với chiều ngang canvas."""
+        if not self._preview_cards:
+            return
+
+        width = self.preview_canvas.winfo_width()
+        if width <= 1:
+            width = 900
+
+        card_width = 210
+        gap = 14
+        cols = max(1, (width - 16) // (card_width + gap))
+
+        for idx, card in enumerate(self._preview_cards.values()):
+            row = idx // cols
+            col = idx % cols
+            card.grid(row=row, column=col, padx=gap // 2, pady=gap // 2, sticky="n")
+
+        self.preview_grid_frame.update_idletasks()
+        self.preview_canvas.configure(scrollregion=self.preview_canvas.bbox("all"))
+
     def _init_status_bar(self) -> None:
         """Khởi tạo thanh trạng thái dưới cùng."""
         status_frame = tk.Frame(
@@ -473,7 +807,274 @@ class ScrcpyApp:
         self.settings.always_on_top = self.var_always_on_top.get()
         self.settings.fullscreen = self.var_fullscreen.get()
         self.settings.extra_args = self.var_extra_args.get()
+        if hasattr(self, "var_preview_enabled"):
+            self.settings.preview_enabled = self.var_preview_enabled.get()
+        if hasattr(self, "var_preview_interval"):
+            val_str = self.var_preview_interval.get().rstrip("sS ").strip()
+            try:
+                self.settings.preview_interval = int(val_str)
+            except ValueError:
+                self.settings.preview_interval = 2
         save_settings(self.settings)
+
+    def _on_tab_changed(self, event=None) -> None:
+        """Xử lý khi người dùng chuyển đổi tab."""
+        if self._closing:
+            return
+
+        if self._is_preview_active():
+            # Chuyển sang tab Xem trước: kích hoạt preview nếu công tắc đang bật
+            self.preview_manager.set_enabled(True)
+            self._start_preview_loop()
+        else:
+            # Rời khỏi tab Xem trước: tạm dừng chụp để tiết kiệm pin/CPU
+            if self._preview_timer_id is not None:
+                try:
+                    self.root.after_cancel(self._preview_timer_id)
+                except Exception:
+                    pass
+                self._preview_timer_id = None
+            self.preview_manager.set_enabled(False)
+
+    def _is_preview_active(self) -> bool:
+        """Kiểm tra tab Xem trước có đang mở VÀ công tắc xem trước đang bật không."""
+        if self._closing:
+            return False
+        if not getattr(self, "var_preview_enabled", None) or not self.var_preview_enabled.get():
+            return False
+        try:
+            current = self.notebook.select()
+            return current == str(self.tab_preview) or self.notebook.tab(current, "text") == "Xem trước"
+        except Exception:
+            return False
+
+    def _on_preview_toggle(self) -> None:
+        """Bật hoặc tắt công tắc xem trước."""
+        enabled = self.var_preview_enabled.get()
+        self.settings.preview_enabled = enabled
+        self._save_current_settings()
+
+        if not enabled:
+            if self._preview_timer_id is not None:
+                try:
+                    self.root.after_cancel(self._preview_timer_id)
+                except Exception:
+                    pass
+                self._preview_timer_id = None
+            self.preview_manager.set_enabled(False)
+
+            # Đưa các thẻ về trạng thái placeholder
+            for card in self._preview_cards.values():
+                card.update_device_info(
+                    dev=card.dev,
+                    is_running=self.launcher.is_running(card.dev.serial),
+                    preview_enabled=False,
+                )
+            self._set_status("Đã tắt xem trước ảnh màn hình")
+        else:
+            self._set_status("Đã bật xem trước ảnh màn hình")
+            for card in self._preview_cards.values():
+                card.update_device_info(
+                    dev=card.dev,
+                    is_running=self.launcher.is_running(card.dev.serial),
+                    preview_enabled=True,
+                )
+            if self._is_preview_active():
+                self.preview_manager.set_enabled(True)
+                self._start_preview_loop()
+
+    def _on_preview_interval_changed(self, event=None) -> None:
+        """Thay đổi chu kỳ làm mới preview."""
+        val_str = self.var_preview_interval.get().rstrip("sS ").strip()
+        try:
+            val = int(val_str)
+        except ValueError:
+            val = 2
+        self.settings.preview_interval = val
+        self._save_current_settings()
+        self._set_status(f"Đã đặt chu kỳ làm mới xem trước: {val}s")
+        if self._is_preview_active():
+            self._start_preview_loop()
+
+    def _start_preview_loop(self) -> None:
+        """Khởi động vòng lặp chụp preview định kỳ."""
+        if not self._is_preview_active():
+            return
+
+        if self._preview_timer_id is not None:
+            try:
+                self.root.after_cancel(self._preview_timer_id)
+            except Exception:
+                pass
+            self._preview_timer_id = None
+
+        self._preview_tick()
+
+    def _preview_tick(self) -> None:
+        """Thực hiện một lượt chụp màn hình cho tất cả thiết bị device."""
+        if not self._is_preview_active():
+            return
+
+        for dev in self.devices_by_serial.values():
+            if dev.state == "device":
+                self.preview_manager.start_capture(
+                    serial=dev.serial,
+                    on_success=self._on_preview_capture_success,
+                    on_error=self._on_preview_capture_error,
+                )
+
+        interval_ms = max(1, self.settings.preview_interval) * 1000
+        self._preview_timer_id = self.root.after(interval_ms, self._preview_tick)
+
+    def _on_preview_capture_success(self, serial: str, data: bytes) -> None:
+        """Nhận kết quả chụp thành công từ worker thread."""
+        if self._closing:
+            return
+        try:
+            self.root.after(0, lambda: self._apply_preview_image(serial, data))
+        except Exception:
+            pass
+
+    def _on_preview_capture_error(self, serial: str, error_msg: str) -> None:
+        """Nhận lỗi chụp từ worker thread."""
+        if self._closing:
+            return
+        try:
+            self.root.after(0, lambda: self._apply_preview_error(serial, error_msg))
+        except Exception:
+            pass
+
+    def _apply_preview_image(self, serial: str, data: bytes) -> None:
+        """Hiển thị ảnh chụp lên thẻ trên main thread."""
+        if self._closing or not self._is_preview_active():
+            return
+        card = self._preview_cards.get(serial)
+        if not card:
+            return
+        try:
+            orig_w, orig_h = parse_png_dimensions(data)
+            factor = compute_subsample_factor(orig_w, orig_h, target_w=190, target_h=220)
+            raw_photo = tk.PhotoImage(data=data)
+            photo = raw_photo.subsample(factor, factor) if factor > 1 else raw_photo
+            card.set_image(photo)
+        except Exception as e:
+            card.set_error(str(e))
+
+    def _apply_preview_error(self, serial: str, error_msg: str) -> None:
+        """Hiển thị lỗi lên thẻ trên main thread và giữ ảnh cũ."""
+        if self._closing:
+            return
+        card = self._preview_cards.get(serial)
+        if card:
+            card.set_error(error_msg)
+
+    def _on_preview_card_double_click(self, dev: adb.DeviceInfo) -> None:
+        """Mở scrcpy cho thiết bị khi double-click hoặc bấm nút Mở trên ô preview."""
+        if dev.state != "device":
+            self._set_status(f"Thiết bị '{dev.display_model}' chưa sẵn sàng ({dev.state_display})")
+            return
+        if self.launcher.is_running(dev.serial):
+            self._set_status(f"Cửa sổ scrcpy cho '{dev.display_model}' ({dev.serial}) đã đang mở")
+            return
+        self._start_scrcpy_for_device(dev)
+
+    def _update_preview_grid(self) -> None:
+        """Đồng bộ lưới xem trước với danh sách thiết bị hiện có."""
+        current_serials = set(self.devices_by_serial.keys())
+        existing_serials = set(self._preview_cards.keys())
+
+        # Gỡ bỏ các thẻ thiết bị đã rút
+        for s in existing_serials - current_serials:
+            card = self._preview_cards.pop(s)
+            card.destroy()
+
+        # Thêm mới hoặc cập nhật các thẻ
+        for serial, dev in self.devices_by_serial.items():
+            is_running = self.launcher.is_running(serial)
+            if serial not in self._preview_cards:
+                card = PreviewCard(
+                    master=self.preview_grid_frame,
+                    dev=dev,
+                    dot_registry=self.dot_registry,
+                    on_open=self._on_preview_card_double_click,
+                )
+                self._preview_cards[serial] = card
+            else:
+                card = self._preview_cards[serial]
+
+            card.update_device_info(
+                dev=dev,
+                is_running=is_running,
+                preview_enabled=self.settings.preview_enabled,
+            )
+
+        # Cập nhật hiển thị dòng nhắc trống
+        if not self.devices_by_serial:
+            self.lbl_preview_empty.pack(fill=tk.X, pady=(20, 0))
+        else:
+            self.lbl_preview_empty.pack_forget()
+
+        self._relayout_preview_grid()
+
+        # Nếu đang ở tab xem trước và có thiết bị mới chưa có ảnh, kích hoạt chụp
+        if self._is_preview_active():
+            for serial, dev in self.devices_by_serial.items():
+                if dev.state == "device" and self._preview_cards[serial].current_photo is None:
+                    self.preview_manager.start_capture(
+                        serial=serial,
+                        on_success=self._on_preview_capture_success,
+                        on_error=self._on_preview_capture_error,
+                    )
+
+    def _update_preview_cards_running(self) -> None:
+        """Cập nhật trạng thái 'Đang hiển thị' trên các thẻ preview."""
+        for serial, card in self._preview_cards.items():
+            dev = self.devices_by_serial.get(serial)
+            if dev:
+                card.update_device_info(
+                    dev=dev,
+                    is_running=self.launcher.is_running(serial),
+                    preview_enabled=self.settings.preview_enabled,
+                )
+
+    def _on_toggle_live_tiling(self) -> None:
+        """Bật hoặc tắt chế độ xếp lưới xem trực tiếp (Live Tiling)."""
+        if self.live_launcher.has_active_sessions():
+            self.live_launcher.stop_all()
+            self.btn_live_tiling.config(text="⊞  Xếp lưới live", style="Secondary.TButton")
+            self._set_status("Đã đóng tất cả cửa sổ lưới live")
+            return
+
+        live_devs = [d for d in self.devices_by_serial.values() if d.state == "device"]
+        if not live_devs:
+            messagebox.showinfo(
+                "Không có thiết bị",
+                "Không có thiết bị nào đang ở trạng thái sẵn sàng để xếp lưới trực tiếp.",
+            )
+            return
+
+        total = len(live_devs)
+        screen_w = max(640, self.root.winfo_screenwidth())
+        screen_h = max(480, self.root.winfo_screenheight())
+
+        started = 0
+        for idx, dev in enumerate(live_devs):
+            geom = compute_tile_geometry(idx, total, screen_w, screen_h)
+            cmd = build_live_command(
+                serial=dev.serial,
+                model=dev.model,
+                geometry=geom,
+                scrcpy_bin=self.scrcpy_bin,
+            )
+            try:
+                self.live_launcher.start(serial=dev.serial, custom_cmd=cmd)
+                started += 1
+            except Exception as e:
+                self._set_status(f"Lỗi mở live cho {dev.display_model}: {e}")
+
+        if started > 0:
+            self.btn_live_tiling.config(text="✕  Đóng lưới live", style="Danger.TButton")
+            self._set_status(f"Đã mở lưới live cho {started}/{total} thiết bị")
 
     def _init_timer(self) -> None:
         """Bắt đầu vòng lặp làm mới định kỳ mỗi 3 giây."""
@@ -515,6 +1116,12 @@ class ScrcpyApp:
         if exited:
             self._update_treeview_rows()
             self._update_button_states()
+            self._update_preview_cards_running()
+
+        if hasattr(self, "live_launcher"):
+            self.live_launcher.check_exited()
+            if hasattr(self, "btn_live_tiling") and not self.live_launcher.has_active_sessions():
+                self.btn_live_tiling.config(text="⊞  Xếp lưới live", style="Secondary.TButton")
 
     def _refresh_device_list_async(self) -> None:
         """Lấy danh sách thiết bị trong thread nền."""
@@ -528,13 +1135,16 @@ class ScrcpyApp:
             except Exception:
                 devices = []
             if not self._closing:
-                self.root.after(0, lambda: self._on_device_list_ready(devices))
+                try:
+                    self.root.after(0, lambda: self._on_device_list_ready(devices))
+                except Exception:
+                    pass
 
         t = threading.Thread(target=worker, daemon=True)
         t.start()
 
     def _on_device_list_ready(self, devices: List[adb.DeviceInfo]) -> None:
-        """Cập nhật Treeview khi có dữ liệu thiết bị từ thread nền."""
+        """Cập nhật Treeview và lưới xem trước khi có dữ liệu thiết bị từ thread nền."""
         self._refreshing = False
         if self._closing:
             return
@@ -542,6 +1152,7 @@ class ScrcpyApp:
         self.devices_by_serial = {d.serial: d for d in devices}
         self._update_treeview_rows()
         self._update_button_states()
+        self._update_preview_grid()
         if self.lbl_device_count:
             self.lbl_device_count.config(text=f"{len(devices)} thiết bị")
 
@@ -693,6 +1304,7 @@ class ScrcpyApp:
 
         self._update_treeview_rows()
         self._update_button_states()
+        self._update_preview_cards_running()
 
     def _on_stop_click(self) -> None:
         """Bấm nút Dừng."""
@@ -706,6 +1318,7 @@ class ScrcpyApp:
         self._set_status(f"Đã dừng cửa sổ scrcpy cho {name}")
         self._update_treeview_rows()
         self._update_button_states()
+        self._update_preview_cards_running()
 
     def _on_refresh_click(self) -> None:
         """Bấm nút Làm mới."""
@@ -735,7 +1348,11 @@ class ScrcpyApp:
                     self.wifi_ip_var.set("")
                 self._refresh_device_list_async()
 
-            self.root.after(0, finish)
+            if not self._closing:
+                try:
+                    self.root.after(0, finish)
+                except Exception:
+                    pass
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -762,7 +1379,11 @@ class ScrcpyApp:
                     messagebox.showerror("Lỗi chuyển sang Wi-Fi", msg)
                 self._refresh_device_list_async()
 
-            self.root.after(0, finish)
+            if not self._closing:
+                try:
+                    self.root.after(0, finish)
+                except Exception:
+                    pass
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -785,12 +1406,28 @@ class ScrcpyApp:
                     messagebox.showerror("Lỗi ngắt kết nối", msg)
                 self._refresh_device_list_async()
 
-            self.root.after(0, finish)
+            if not self._closing:
+                try:
+                    self.root.after(0, finish)
+                except Exception:
+                    pass
 
         threading.Thread(target=worker, daemon=True).start()
 
     def _on_closing(self) -> None:
         """Xử lý đóng ứng dụng."""
+        # Dừng các tiến trình và tác vụ xem trước
+        if hasattr(self, "preview_manager"):
+            self.preview_manager.cancel_all()
+        if hasattr(self, "live_launcher"):
+            self.live_launcher.stop_all()
+        if getattr(self, "_preview_timer_id", None) is not None:
+            try:
+                self.root.after_cancel(self._preview_timer_id)
+            except Exception:
+                pass
+            self._preview_timer_id = None
+
         if self.launcher.has_active_sessions():
             # Hỏi người dùng có muốn dừng các cửa sổ đang mở không
             ans = messagebox.askyesnocancel(

@@ -3,6 +3,7 @@
 import math
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 import unittest
@@ -224,8 +225,15 @@ class TestPreviewManager(unittest.TestCase):
 
     @patch("subprocess.Popen")
     def test_disabling_cancels_and_stops_captures(self, mock_popen):
+        started_event = threading.Event()
         proc = MagicMock()
-        proc.communicate.side_effect = lambda timeout=None: (time.sleep(0.5), (b"", b""))[1]
+
+        def fake_communicate(timeout=None):
+            started_event.set()
+            time.sleep(0.5)
+            return (b"", b"")
+
+        proc.communicate.side_effect = fake_communicate
         proc.returncode = 0
         mock_popen.return_value = proc
 
@@ -236,7 +244,7 @@ class TestPreviewManager(unittest.TestCase):
         on_error = MagicMock()
 
         mgr.start_capture("dev1", on_success=on_success, on_error=on_error)
-        time.sleep(0.05)
+        started_event.wait(timeout=2.0)
 
         # Tắt giữa chừng
         mgr.set_enabled(False)
