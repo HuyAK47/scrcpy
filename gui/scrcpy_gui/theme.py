@@ -471,4 +471,41 @@ def apply_theme(root: tk.Tk) -> StatusDotRegistry:
     )
     style.map("TScrollbar", background=[("active", BORDER_FOCUS)])
 
+    # 11. Bảng phân tab (Notebook)
+    style.configure(
+        "TNotebook",
+        background=BG_DARK,
+        borderwidth=0,
+        tabmargins=[0, 0, 0, 8],
+    )
+    style.configure(
+        "TNotebook.Tab",
+        background=BG_CARD,
+        foreground=TEXT_SECONDARY,
+        padding=(16, 8),
+        font=font_bold,
+        borderwidth=1,
+        bordercolor=BORDER,
+        lightcolor=BORDER,
+        darkcolor=BORDER,
+    )
+    style.map(
+        "TNotebook.Tab",
+        background=[
+            ("selected", BG_CARD_HEADER),
+            ("active", "#1e293b"),
+        ],
+        foreground=[
+            ("selected", TEXT_PRIMARY),
+            ("active", TEXT_PRIMARY),
+        ],
+        bordercolor=[
+            ("selected", BORDER_FOCUS),
+            ("active", BORDER),
+        ],
+        lightcolor=[
+            ("selected", BORDER_FOCUS),
+        ],
+    )
+
     return StatusDotRegistry(root)
